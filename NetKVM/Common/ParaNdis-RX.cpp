@@ -25,16 +25,22 @@ bool CParaNdisRX::Create(PPARANDIS_ADAPTER Context, UINT DeviceQueueIndex)
 
     m_nReusedRxBuffersLimit = m_Context->NetMaxReceiveBuffers / 4 + 1;
 
-    PrepareReceiveBuffers();
+    if (!PrepareReceiveBuffers()) {
+        DPrintf(0, ("CParaNdisRX::Create - PrepareReceiveBuffers failed"));
+        return false;
+    }
 
     return true;
 }
 
 int CParaNdisRX::PrepareReceiveBuffers()
 {
-    int nRet = 0;
     UINT i;
     DEBUG_ENTRY(4);
+
+    NdisZeroMemory(m_ReservedRxBufferMemory, sizeof(m_ReservedRxBufferMemory));
+    m_RxBufferIndex = 0;
+    m_RxBufferOffset = 0;
 
     for (i = 0; i < m_Context->NetMaxReceiveBuffers; ++i)
     {
@@ -42,13 +48,11 @@ int CParaNdisRX::PrepareReceiveBuffers()
         if (!pBuffersDescriptor) break;
 
         pBuffersDescriptor->Queue = this;
-
         if (!AddRxBufferToQueue(pBuffersDescriptor))
         {
             ParaNdis_FreeRxBufferDescriptor(m_Context, pBuffersDescriptor);
             break;
         }
-
         InsertTailList(&m_NetReceiveBuffers, &pBuffersDescriptor->listEntry);
 
         m_NetNofReceiveBuffers++;
@@ -56,11 +60,10 @@ int CParaNdisRX::PrepareReceiveBuffers()
     /* TODO - NetMaxReceiveBuffers should take into account all queues */
     m_Context->NetMaxReceiveBuffers = m_NetNofReceiveBuffers;
     DPrintf(0, ("[%s] MaxReceiveBuffers %d\n", __FUNCTION__, m_Context->NetMaxReceiveBuffers));
-    m_Reinsert = true;
 
-    m_VirtQueue.Kick();
+    // No kick as we didn't set DRIVER_OK bit yet.
 
-    return nRet;
+    return m_NetNofReceiveBuffers;
 }
 
 pRxNetDescriptor CParaNdisRX::CreateRxDescriptorOnInit()
@@ -87,7 +90,7 @@ pRxNetDescriptor CParaNdisRX::CreateRxDescriptorOnInit()
     for (p->PagesAllocated = 0; p->PagesAllocated < ulNumPages; p->PagesAllocated++)
     {
         p->PhysicalPages[p->PagesAllocated].size = PAGE_SIZE;
-        if (!ParaNdis_InitialAllocatePhysicalMemory(m_Context, &p->PhysicalPages[p->PagesAllocated]))
+        if (!InitialAllocatePhysicalMemory(&p->PhysicalPages[p->PagesAllocated]))
             goto error_exit;
 
         p->BufferSGArray[p->PagesAllocated].physAddr = p->PhysicalPages[p->PagesAllocated].Physical;
@@ -124,6 +127,33 @@ BOOLEAN CParaNdisRX::AddRxBufferToQueue(pRxNetDescriptor pBufferDescriptor)
         m_Context->bUseIndirect ? pBufferDescriptor->IndirectArea.Physical.QuadPart : 0);
 }
 
+BOOLEAN CParaNdisRX::InitialAllocatePhysicalMemory(tCompletePhysicalAddress* Address) {
+    if (Address->size % PAGE_SIZE) {
+        DPrintf(0, ("[%s] size (%d) is not page aligned\n", __FUNCTION__, Address->size));
+        return FALSE;
+    }
+    while (m_RxBufferIndex < ARRAYSIZE(m_ReservedRxBufferMemory)) {
+        tCompletePhysicalAddress* bulkBuffer = &m_ReservedRxBufferMemory[m_RxBufferIndex];
+        if (bulkBuffer->size == 0) {
+            bulkBuffer->size = 1024 * 256;
+            if (!ParaNdis_InitialAllocatePhysicalMemory(m_Context, bulkBuffer)) {
+              DPrintf(0, ("[%s] fail to allocate memory with slot %d\n", __FUNCTION__, m_RxBufferIndex));
+              break;
+            }
+        }
+        if (bulkBuffer->size - m_RxBufferOffset >= Address->size) {
+            Address->Physical.QuadPart = bulkBuffer->Physical.QuadPart + m_RxBufferOffset;
+            Address->Virtual = (PCHAR)(bulkBuffer->Virtual) + m_RxBufferOffset;
+            m_RxBufferOffset += Address->size;
+            return TRUE;
+        } else {
+            m_RxBufferIndex++;
+            m_RxBufferOffset = 0;
+        }
+    }
+    return FALSE;
+}
+
 void CParaNdisRX::FreeRxDescriptorsFromList()
 {
     while (!IsListEmpty(&m_NetReceiveBuffers))
@@ -131,23 +161,22 @@ void CParaNdisRX::FreeRxDescriptorsFromList()
         pRxNetDescriptor pBufferDescriptor = (pRxNetDescriptor)RemoveHeadList(&m_NetReceiveBuffers);
         ParaNdis_FreeRxBufferDescriptor(m_Context, pBufferDescriptor);
     }
+    for (UINT i = 0; i < ARRAYSIZE(m_ReservedRxBufferMemory); i++) {
+        if (m_ReservedRxBufferMemory[i].Virtual) {
+            ParaNdis_FreePhysicalMemory(m_Context, &m_ReservedRxBufferMemory[i]);
+        }
+    }
 }
 
-void CParaNdisRX::ReuseReceiveBufferNoLock(pRxNetDescriptor pBuffersDescriptor)
+void CParaNdisRX::ReuseReceiveBuffer(pRxNetDescriptor pBuffersDescriptor)
 {
     DEBUG_ENTRY(4);
 
-    m_Context->m_rxPacketsOutsideRing.Release();
-
-    if (!m_Reinsert)
-    {
-        InsertTailList(&m_NetReceiveBuffers, &pBuffersDescriptor->listEntry);
-        m_NetNofReceiveBuffers++;
+    if (!pBuffersDescriptor)
         return;
-    } 
-    else if (AddRxBufferToQueue(pBuffersDescriptor))
+
+    if (AddRxBufferToQueue(pBuffersDescriptor))
     {
-        InsertTailList(&m_NetReceiveBuffers, &pBuffersDescriptor->listEntry);
         m_NetNofReceiveBuffers++;
 
         if (m_NetNofReceiveBuffers > m_Context->NetMaxReceiveBuffers)
@@ -185,12 +214,6 @@ VOID CParaNdisRX::ProcessRxRing(CCHAR nCurrCpuReceiveQueue)
         GROUP_AFFINITY TargetAffinity;
         PROCESSOR_NUMBER TargetProcessor;
 
-        /* The counter m_rxPacketsOutsideRing is increased when the packet is removed from ring; it is decreased
-        in CParaNdisRX::ReuseReceiveBuffer either in case of error or when NDIS calls ParaNdis6_ReturnNetBufferLists
-        indicating the return of a receive buffer under miniport driver ownership */
-
-        m_Context->m_rxPacketsOutsideRing.AddRef();
-        RemoveEntryList(&pBufferDescriptor->listEntry);
         m_NetNofReceiveBuffers--;
 
         BOOLEAN packetAnalyzisRC;
@@ -206,7 +229,7 @@ VOID CParaNdisRX::ProcessRxRing(CCHAR nCurrCpuReceiveQueue)
 
         if (!packetAnalyzisRC)
         {
-            pBufferDescriptor->Queue->ReuseReceiveBufferNoLock(pBufferDescriptor);
+            pBufferDescriptor->Queue->ReuseReceiveBufferNoLock(m_Context->ReuseBufferRegular, pBufferDescriptor);
             m_Context->Statistics.ifInErrors++;
             m_Context->Statistics.ifInDiscards++;
             continue;
@@ -231,8 +254,6 @@ VOID CParaNdisRX::ProcessRxRing(CCHAR nCurrCpuReceiveQueue)
 void CParaNdisRX::PopulateQueue()
 {
     LIST_ENTRY TempList;
-    CLockedContext<CNdisSpinLock> autoLock(m_Lock);
-
 
     InitializeListHead(&TempList);
 
@@ -260,8 +281,6 @@ void CParaNdisRX::PopulateQueue()
             m_Context->NetMaxReceiveBuffers--;
         }
     }
-    m_Reinsert = true;
-
     m_VirtQueue.Kick();
 }
 

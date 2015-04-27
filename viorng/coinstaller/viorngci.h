@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014-2015 Red Hat, Inc.
+ * Copyright (C) 2014 Red Hat, Inc.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -28,6 +28,3 @@
 #define NT_SUCCESS(status) (status >= 0)
 #endif
 
-#ifndef STATUS_SUCCESS
-#define STATUS_SUCCESS ((NTSTATUS)0x00000000L)
-#endif

@@ -1,6 +1,5 @@
 #include "ndis56common.h"
 #include "ParaNdis-VirtQueue.h"
-#include <sal.h>
 
 bool CVirtQueue::AllocateQueueMemory()
 {
@@ -227,10 +226,8 @@ SubmitTxPacketResult CTXVirtQueue::SubmitPacket(CNB &NB)
         {
             KickQueueOnOverflow();
             //Fall-through
-            __fallthrough;
         }
         case SUBMIT_PACKET_TOO_LARGE:
-            __fallthrough;
         case SUBMIT_FAILURE:
         {
             m_Descriptors.Push(TXDescriptor);

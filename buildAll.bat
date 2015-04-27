@@ -21,7 +21,3 @@ cd ..
 cd viorng
 call buildall.bat
 cd ..
-
-cd pvpanic
-call buildall.bat
-cd ..

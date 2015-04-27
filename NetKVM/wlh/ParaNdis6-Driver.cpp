@@ -1,5 +1,5 @@
 /**********************************************************************
- * Copyright (c) 2008-2015 Red Hat, Inc.
+ * Copyright (c) 2008  Red Hat, Inc.
  *
  * File: ParaNdis6-Driver.c
  *
@@ -160,9 +160,6 @@ static NDIS_STATUS ParaNdis6_Initialize(
 
     if (status == NDIS_STATUS_SUCCESS)
     {
-        NdisAllocateSpinLock(&pContext->m_CompletionLock);
-        pContext->m_CompletionLockCreated = true;
-
         new (&pContext->m_PauseLock, PLACEMENT_NEW) CNdisRWLock();
         if (!pContext->m_PauseLock.Create(pContext->MiniportHandle))
         {
@@ -329,11 +326,6 @@ static NDIS_STATUS ParaNdis6_Initialize(
 #if PARANDIS_SUPPORT_RSS
         pContext->RSSParameters.rwLock.~CNdisRWLock();
 #endif
-        if (pContext->m_CompletionLockCreated)
-        {
-            NdisFreeSpinLock(&pContext->m_CompletionLock);
-        }
-
         pContext->m_PauseLock.~CNdisRWLock();
 
         if (pContext->IODevice != nullptr)
@@ -414,36 +406,6 @@ static VOID ParaNdis6_Unload(IN PDRIVER_OBJECT pDriverObject)
 }
 
 /**********************************************************
-    callback from asynchronous RECEIVE PAUSE
-***********************************************************/
-static void OnReceivePauseComplete(void *ctx)
-{
-    DEBUG_ENTRY(0);
-    // pause exit
-    PPARANDIS_ADAPTER pContext = (PPARANDIS_ADAPTER) ctx;
-    ParaNdis_DebugHistory(pContext, hopSysPause, NULL, 0, 0, 0);
-    NdisMPauseComplete(pContext->MiniportHandle);
-}
-
-/**********************************************************
-    callback from asynchronous SEND PAUSE
-***********************************************************/
-static void OnSendPauseComplete(void *ctx)
-{
-    PPARANDIS_ADAPTER pContext = (PPARANDIS_ADAPTER) ctx;
-    NDIS_STATUS status;
-    DEBUG_ENTRY(0);
-    status = ParaNdis6_ReceivePauseRestart(pContext, TRUE, OnReceivePauseComplete);
-    if (status != NDIS_STATUS_PENDING)
-    {
-        // pause exit
-        ParaNdis_DebugHistory(pContext, hopSysPause, NULL, 0, 0, 0);
-        NdisMPauseComplete(pContext->MiniportHandle);
-    }
-}
-
-
-/**********************************************************
 Required NDIS handler
 called at IRQL = PASSIVE_LEVEL
 Must pause RX and TX
@@ -454,18 +416,31 @@ static NDIS_STATUS ParaNdis6_Pause(
         NDIS_HANDLE                         miniportAdapterContext,
         PNDIS_MINIPORT_PAUSE_PARAMETERS     miniportPauseParameters)
 {
-    NDIS_STATUS  status;
+    NDIS_STATUS  status = STATUS_SUCCESS;
     PARANDIS_ADAPTER *pContext = (PARANDIS_ADAPTER *)miniportAdapterContext;
     DEBUG_ENTRY(0);
 
     UNREFERENCED_PARAMETER(miniportPauseParameters);
 
     ParaNdis_DebugHistory(pContext, hopSysPause, NULL, 1, 0, 0);
-    status = ParaNdis6_SendPauseRestart(pContext, TRUE, OnSendPauseComplete);
-    if (status != NDIS_STATUS_PENDING)
+    ParaNdis6_SendReceivePause(pContext);
     {
-        status = ParaNdis6_ReceivePauseRestart(pContext, TRUE, OnReceivePauseComplete);
+        CNdisPassiveWriteAutoLock(pContext->m_PauseLock);
+
+        if (pContext->m_packetPending == 0)
+        {
+            DPrintf(0, ("[%s] - No pending packets, pause immediate success", __FUNCTION__));
+            pContext->SendReceiveState = srsDisabled;
+            status = STATUS_SUCCESS;
+        }
+        else
+        {
+            DPrintf(0, ("[%s] - Pending packets, pause pending", __FUNCTION__));
+            pContext->SendReceiveState = srsPausing;
+            status = STATUS_PENDING;
+        }
     }
+
     DEBUG_EXIT_STATUS(0, status);
     if (status == STATUS_SUCCESS)
     {
@@ -493,8 +468,8 @@ static NDIS_STATUS ParaNdis6_Restart(
     UNREFERENCED_PARAMETER(miniportRestartParameters);
 
     ParaNdis_DebugHistory(pContext, hopSysResume, NULL, 1, 0, 0);
-    ParaNdis6_SendPauseRestart(pContext, FALSE, NULL);
-    ParaNdis6_ReceivePauseRestart(pContext, FALSE, NULL);
+
+    pContext->SendReceiveState = srsEnabled;
 
     ParaNdis_DebugHistory(pContext, hopSysResume, NULL, 0, 0, 0);
     DEBUG_EXIT_STATUS(2, status);
@@ -548,49 +523,28 @@ static BOOLEAN ParaNdis6_CheckForHang(
     return ParaNdis_CheckForHang(pContext);
 }
 
-
-/**********************************************************
-    callback from asynchronous SEND PAUSE on reset
-***********************************************************/
-static void OnSendPauseCompleteOnReset(void *ctx)
-{
-    DEBUG_ENTRY(0);
-    PPARANDIS_ADAPTER pContext = (PPARANDIS_ADAPTER) ctx;
-    NdisSetEvent(&pContext->ResetEvent);
-}
-
-/**********************************************************
-    callback from asynchronous RECEIVE PAUSE on reset
-***********************************************************/
-static void OnReceivePauseCompleteOnReset(void *ctx)
-{
-    DEBUG_ENTRY(0);
-    PPARANDIS_ADAPTER pContext = (PPARANDIS_ADAPTER) ctx;
-    NdisSetEvent(&pContext->ResetEvent);
-}
-
 VOID ParaNdis_Suspend(PARANDIS_ADAPTER *pContext)
 {
     DPrintf(0, ("[%s]%s\n", __FUNCTION__, pContext->bFastSuspendInProcess ? "(Fast)" : ""));
     NdisResetEvent(&pContext->ResetEvent);
-    if (NDIS_STATUS_PENDING != ParaNdis6_SendPauseRestart(pContext, TRUE, OnSendPauseCompleteOnReset))
+
+    ParaNdis6_SendReceivePause(pContext);
     {
-        NdisSetEvent(&pContext->ResetEvent);
-    }
-    NdisWaitEvent(&pContext->ResetEvent, 0);
-    if (!pContext->bFastSuspendInProcess)
-    {
-        NdisResetEvent(&pContext->ResetEvent);
-        if (NDIS_STATUS_PENDING != ParaNdis6_ReceivePauseRestart(pContext, TRUE, OnReceivePauseCompleteOnReset))
+        CNdisPassiveWriteAutoLock(pContext->m_PauseLock);
+
+        if (pContext->m_packetPending == 0)
         {
             NdisSetEvent(&pContext->ResetEvent);
+            pContext->SendReceiveState = srsDisabled;
         }
-        NdisWaitEvent(&pContext->ResetEvent, 0);
+        else
+        {
+            pContext->SendReceiveState = srcResetting;
+        }
     }
-    else
-    {
-        ParaNdis6_ReceivePauseRestart(pContext, TRUE, NULL);
-    }
+
+    NdisWaitEvent(&pContext->ResetEvent, 0);
+
     DEBUG_EXIT_STATUS(0, 0);
 }
 
@@ -600,17 +554,16 @@ static void OnResetWorkItem(PVOID  WorkItemContext, NDIS_HANDLE  NdisIoWorkItemH
     {
         tGeneralWorkItem *pwi = (tGeneralWorkItem *)WorkItemContext;
         PARANDIS_ADAPTER *pContext = pwi->pContext;
-        BOOLEAN bSendActive, bReceiveActive;
+        BOOLEAN bSendReceiveEnabled = pContext->SendReceiveState == srsEnabled;
         DEBUG_ENTRY(0);
-        bSendActive = pContext->SendState == srsEnabled;
-        bReceiveActive = pContext->ReceiveState == srsEnabled;
         pContext->bResetInProgress = TRUE;
         ParaNdis_Suspend(pContext);
         ParaNdis_PowerOff(pContext);
         ParaNdis_PowerOn(pContext);
-        if (bSendActive) ParaNdis6_SendPauseRestart(pContext, FALSE, NULL);
-        if (bReceiveActive) ParaNdis6_ReceivePauseRestart(pContext, FALSE, NULL);
         pContext->bResetInProgress = FALSE;
+
+        if (bSendReceiveEnabled)
+            pContext->SendReceiveState = srsEnabled;
 
         NdisFreeMemory(pwi, 0, 0);
         NdisFreeIoWorkItem(NdisIoWorkItemHandle);
@@ -661,8 +614,7 @@ VOID ParaNdis_Resume(PARANDIS_ADAPTER *pContext)
     DPrintf(0, ("[%s] %s\n", __FUNCTION__, pContext->bFastSuspendInProcess ? " Resuming TX and RX" : "(nothing to do)"));
     if (pContext->bFastSuspendInProcess)
     {
-        ParaNdis6_SendPauseRestart(pContext, FALSE, NULL);
-        ParaNdis6_ReceivePauseRestart(pContext, FALSE, NULL);
+        pContext->SendReceiveState = srsEnabled;
     }
 }
 
@@ -923,14 +875,14 @@ static void SetupInterrruptAffinity(PIO_RESOURCE_REQUIREMENTS_LIST prrl)
                 {
                     desc->Flags |= CM_RESOURCE_INTERRUPT_POLICY_INCLUDED;
                     desc->u.Interrupt.Group = procNumber.Group;
-                    desc->u.Interrupt.TargetedProcessors = 1i64 << procNumber.Number;
+                    desc->u.Interrupt.TargetedProcessors = 1ll << procNumber.Number;
                 }
                 else
                 {
                     DPrintf(0, ("[%s] - can't convert index %u into processor number\n", __FUNCTION__, procIndex));
                 }
 #else
-                desc->u.Interrupt.TargetedProcessors = 1i64 << procIndex;
+                desc->u.Interrupt.TargetedProcessors = 1ll << procIndex;
 #endif
             }
         }
@@ -956,8 +908,8 @@ static PIO_RESOURCE_REQUIREMENTS_LIST ParseFilterResourceIrp(
     ULONG nRemoved = 0;
     UINT nInterrupts = 0;
     PIO_RESOURCE_REQUIREMENTS_LIST newPrrl = NULL;
-    ULONG QueueNumber;
     BOOLEAN MSIResourceListed = FALSE;
+    ULONG QueueNumber;
 #if NDIS_SUPPORT_NDIS620    
     QueueNumber = NdisGroupActiveProcessorCount(ALL_PROCESSOR_GROUPS) * 2 + 1;
 #elif NDIS_SUPPORT_NDIS6
@@ -1036,7 +988,6 @@ static PIO_RESOURCE_REQUIREMENTS_LIST ParseFilterResourceIrp(
                 }
 
                 DPrintf(resourceFilterLevel, ("[%s] MSI resources %s listed\n", __FUNCTION__, MSIResourceListed ? "" : "not"));
-
 
                 if (!bRemoveMSIResources && MSIResourceListed)
                 {
@@ -1238,7 +1189,7 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT pDriverObject, PUNICODE_STRING pRegistryPath
 #ifdef DEBUG_TIMING
     LARGE_INTEGER TickCount;
     LARGE_INTEGER SysTime;
-#endif DEBUG_TIMING
+#endif //DEBUG_TIMING
 
     ParaNdis_DebugInitialize();
 

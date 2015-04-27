@@ -1,5 +1,5 @@
 /**********************************************************************
- * Copyright (c) 2008-2015 Red Hat, Inc.
+ * Copyright (c) 2008  Red Hat, Inc.
  *
  * File: osdep.h
  *
@@ -18,10 +18,10 @@
 #include <ndis.h>
 #pragma warning (pop)
 
-#define u8 unsigned char
-#define u16 unsigned short
-#define u32 unsigned long
-#define u64 ULONGLONG
+typedef UCHAR u8;
+typedef USHORT u16;
+typedef ULONG u32;
+typedef ULONGLONG u64;
 
 #define mb()   KeMemoryBarrier()
 #define rmb()  KeMemoryBarrier()

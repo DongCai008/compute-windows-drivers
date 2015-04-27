@@ -1,5 +1,5 @@
 /**********************************************************************
- * Copyright (c) 2008-2015 Red Hat, Inc.
+ * Copyright (c) 2008  Red Hat, Inc.
  *
  * File: sw-offload.c
  *
@@ -10,7 +10,6 @@
  *
 **********************************************************************/
 #include "ndis56common.h"
-#include <sal.h>
 
 // till IP header size is 8 bit
 #define MAX_SUPPORTED_IPV6_HEADERS  (256 - 4)
@@ -19,7 +18,7 @@
 typedef struct _tagIPv6ExtHeader {
     UCHAR       ip6ext_next_header;     // next header type
     UCHAR       ip6ext_hdr_len;         // length of this header in 8 bytes unit, not including first 8 bytes
-    USHORT      options;                // 
+    USHORT      options;                //
 } IPv6ExtHeader;
 
 // IP Pseudo Header RFC 768
@@ -286,17 +285,11 @@ QualifyIpPacket(IPHeader *pIpHeader, ULONG len, BOOLEAN verifyLength)
                     break;
                     //existing extended headers
                 case 0:
-                    __fallthrough;
                 case 60:
-                    __fallthrough;
                 case 43:
-                    __fallthrough;
                 case 44:
-                    __fallthrough;
                 case 51:
-                    __fallthrough;
                 case 50:
-                    __fallthrough;
                 case 135:
                     if (len >= ((ULONG)ipHeaderSize + 8))
                     {
@@ -882,11 +875,8 @@ BOOLEAN AnalyzeIP6Hdr(
         {
         default:
         case IP6_HDR_NONE:
-            __fallthrough;
         case PROTOCOL_TCP:
-            __fallthrough;
         case PROTOCOL_UDP:
-            __fallthrough;
         case IP6_HDR_FRAGMENT:
             return TRUE;
         case IP6_HDR_DESTINATON:
@@ -919,11 +909,8 @@ BOOLEAN AnalyzeIP6Hdr(
             }
             break;
         case IP6_HDR_HOP_BY_HOP:
-            __fallthrough;
         case IP6_HDR_ESP:
-            __fallthrough;
         case IP6_HDR_AUTHENTICATION:
-            __fallthrough;
         case IP6_HDR_MOBILITY:
             if(!SkipIP6ExtensionHeader(ip6Hdr, dataLength, ip6HdrLength, nextHdr))
                 return FALSE;

@@ -1,5 +1,5 @@
 /**********************************************************************
- * Copyright (c) 2008-2015 Red Hat, Inc.
+ * Copyright (c) 2008  Red Hat, Inc.
  *
  * File: ndis56common.h
  *
@@ -41,7 +41,7 @@ extern "C"
 #include "osdep.h"
 
 #if NDIS_SUPPORT_NDIS630
-#define PARANDIS_SUPPORT_RSC 0 // Disable RSC support until support on the host side is ready
+#define PARANDIS_SUPPORT_RSC 1
 #endif
 
 #if NDIS_SUPPORT_NDIS620
@@ -171,15 +171,16 @@ static const ULONG PARANDIS_PACKET_FILTERS =
     NDIS_PACKET_TYPE_PROMISCUOUS |
     NDIS_PACKET_TYPE_ALL_MULTICAST;
 
-typedef VOID (*ONPAUSECOMPLETEPROC)(VOID *);
-
-
 typedef enum _tagSendReceiveState
 {
     srsDisabled = 0,        // initial state
-    srsPausing,
-    srsEnabled
+    srsEnabled = 0x1,
+    srsPausing = 0x10,
+    srcResetting = 0x30,
+    srsHalting = 0x20
 } tSendReceiveState;
+
+#define SRS_IN_TRANSITION_TO_DISABLE(s) ((s) & 0xf0)
 
 typedef struct _tagAdapterResources
 {
@@ -449,17 +450,12 @@ typedef struct _tagPARANDIS_ADAPTER
     } extraStatistics;
     tOurCounters            Counters;
     tOurCounters            Limits;
-    tSendReceiveState       SendState;
-    tSendReceiveState       ReceiveState;
-    ONPAUSECOMPLETEPROC     SendPauseCompletionProc;
-    ONPAUSECOMPLETEPROC     ReceivePauseCompletionProc;
+    tSendReceiveState       SendReceiveState;
 
     CNdisRWLock             m_PauseLock;
-    NDIS_SPIN_LOCK          m_CompletionLock;
-    bool                    m_CompletionLockCreated;
+    CNdisRefCounter         m_packetPending;
 
-    CNdisRefCounter         m_rxPacketsOutsideRing;
-
+    LONG                    ReuseBufferRegular;
     /* initial number of free Tx descriptor(from cfg) - max number of available Tx descriptors */
     UINT                    maxFreeTxDescriptors;
     /* total of Rx buffer in turnaround */
@@ -614,10 +610,12 @@ VOID ParaNdis_ReceiveQueueAddBuffer(
     PPARANDIS_RECEIVE_QUEUE pQueue,
     pRxNetDescriptor pBuffer);
 
-VOID ParaNdis_TestPausing(
-    PARANDIS_ADAPTER *pContext);
+VOID ParaNdis_DecreasePending(
+    PARANDIS_ADAPTER *pContext,
+    PNET_BUFFER_LIST NBL,
+    LPCSTR caller);
 
-bool ParaNdis_HasPacketsInHW(
+VOID ParaNdis_TestPausing(
     PARANDIS_ADAPTER *pContext);
 
 VOID ParaNdis_ProcessorNumberToGroupAffinity(

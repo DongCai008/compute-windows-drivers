@@ -1,5 +1,5 @@
 /**********************************************************************
- * Copyright (c) 2008-2015 Red Hat, Inc.
+ * Copyright (c) 2008  Red Hat, Inc.
  *
  * File: ParaNdis6-Oid.c
  *
@@ -10,7 +10,6 @@
  *
 **********************************************************************/
 #include "ParaNdis-Oid.h"
-#include <sal.h>
 
 static const char VendorName[] = "Red Hat";
 
@@ -215,7 +214,7 @@ NDIS_STATUS ParaNdis_OidQueryCommon(PARANDIS_ADAPTER *pContext, tOidDesc *pOid)
         USHORT                                  us;
         NDIS_PNP_CAPABILITIES                   PMCaps;
     } u;
-#define SETINFO(field, value) pInfo = &u.##field; ulSize = sizeof(u.##field); u.##field = (value)
+#define SETINFO(field, value) pInfo = &u.field; ulSize = sizeof(u.field); u.field = (value)
     switch (pOid->Oid)
     {
     case OID_GEN_SUPPORTED_LIST:
@@ -225,7 +224,6 @@ NDIS_STATUS ParaNdis_OidQueryCommon(PARANDIS_ADAPTER *pContext, tOidDesc *pOid)
         SETINFO(ul, NdisHardwareStatusReady);
         break;
     case OID_GEN_MEDIA_SUPPORTED:
-        __fallthrough;
     case OID_GEN_MEDIA_IN_USE:
         SETINFO(Medium, NdisMedium802_3);
         break;
@@ -258,7 +256,6 @@ NDIS_STATUS ParaNdis_OidQueryCommon(PARANDIS_ADAPTER *pContext, tOidDesc *pOid)
         SETINFO(ul, pContext->MaxPacketSize.nMaxFullSizeOsRx);
         break;
     case OID_GEN_TRANSMIT_BLOCK_SIZE:
-        __fallthrough;
     case OID_GEN_MAXIMUM_TOTAL_SIZE:
         SETINFO(ul, pContext->MaxPacketSize.nMaxFullSizeOS);
         break;
@@ -385,29 +382,17 @@ NDIS_STATUS ParaNdis_OidQueryCommon(PARANDIS_ADAPTER *pContext, tOidDesc *pOid)
         SETINFO(ul64, pContext->Statistics.ifOutErrors );
         break;
     case OID_GEN_RCV_ERROR:
-        __fallthrough;
     case OID_GEN_RCV_NO_BUFFER:
-        __fallthrough;
     case OID_802_3_RCV_OVERRUN:
-        __fallthrough;
     case OID_GEN_RCV_CRC_ERROR:
-        __fallthrough;
     case OID_802_3_RCV_ERROR_ALIGNMENT:
-        __fallthrough;
     case OID_802_3_XMIT_UNDERRUN:
-        __fallthrough;
     case OID_802_3_XMIT_ONE_COLLISION:
-        __fallthrough;
     case OID_802_3_XMIT_DEFERRED:
-        __fallthrough;
     case OID_802_3_XMIT_MAX_COLLISIONS:
-        __fallthrough;
     case OID_802_3_XMIT_MORE_COLLISIONS:
-        __fallthrough;
     case OID_802_3_XMIT_HEARTBEAT_FAILURE:
-        __fallthrough;
     case OID_802_3_XMIT_TIMES_CRS_LOST:
-        __fallthrough;
     case OID_802_3_XMIT_LATE_COLLISIONS:
         SETINFO(ul64, 0);
         break;
@@ -573,7 +558,6 @@ MAKECASE(OID_TCP_TASK_IPSEC_OFFLOAD_V2_UPDATE_SA)
             }
             return (const char *)buffer;
         }
-        break;
     }
 }
 

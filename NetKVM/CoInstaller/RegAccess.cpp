@@ -379,7 +379,6 @@ BOOL neTKVMRegAccess::AddKey(LPCTSTR lpzKeyName)
                        &hkWriteKeyHandle,
                        &dwDisposition) == ERROR_SUCCESS)
     {
-        bResult = TRUE;
         RegCloseKey(hkWriteKeyHandle);
     }
 

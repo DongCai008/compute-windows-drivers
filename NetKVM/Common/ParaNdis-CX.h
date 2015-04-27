@@ -9,7 +9,7 @@ public:
 
     bool Create(PPARANDIS_ADAPTER Context, UINT DeviceQueueIndex);
 
-    BOOLEAN CParaNdisCX::SendControlMessage(
+    BOOLEAN SendControlMessage(
         UCHAR cls,
         UCHAR cmd,
         PVOID buffer1,

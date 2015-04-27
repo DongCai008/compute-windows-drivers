@@ -639,15 +639,6 @@ VOID VIOSerialPortWrite(IN WDFQUEUE Queue,
 
     PAGED_CODE();
 
-    Port = RawPdoSerialPortGetData(WdfIoQueueGetDevice(Queue))->port;
-    if (Port->Removed)
-    {
-        TraceEvents(TRACE_LEVEL_WARNING, DBG_WRITE,
-            "Write request on a removed port %d\n", Port->PortId);
-        WdfRequestComplete(Request, STATUS_OBJECT_NO_LONGER_EXISTS);
-        return;
-    }
-
     status = WdfRequestRetrieveInputBuffer(Request, Length, &InBuf, NULL);
     if (!NT_SUCCESS(status))
     {
@@ -656,6 +647,8 @@ VOID VIOSerialPortWrite(IN WDFQUEUE Queue,
         WdfRequestComplete(Request, status);
         return;
     }
+
+    Port = RawPdoSerialPortGetData(WdfIoQueueGetDevice(Queue))->port;
 
     if (VIOSerialWillWriteBlock(Port))
     {
@@ -718,12 +711,7 @@ VOID VIOSerialPortWrite(IN WDFQUEUE Queue,
         ExFreePoolWithTag(entry, VIOSERIAL_DRIVER_MEMORY_TAG);
 
         Port->PendingWriteRequest = NULL;
-
-        if (WdfRequestUnmarkCancelable(Request) != STATUS_CANCELLED)
-        {
-            WdfRequestComplete(Request, Port->Removed ?
-                STATUS_INVALID_DEVICE_STATE : STATUS_INSUFFICIENT_RESOURCES);
-        }
+        WdfRequestComplete(Request, STATUS_INSUFFICIENT_RESOURCES);
     }
 
     TraceEvents(TRACE_LEVEL_VERBOSE, DBG_WRITE,"<-- %s\n", __FUNCTION__);

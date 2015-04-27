@@ -1,5 +1,4 @@
 #include "ndis56common.h"
-#include <sal.h>
 
 CNBL::CNBL(PNET_BUFFER_LIST NBL, PPARANDIS_ADAPTER Context, CParaNdisTX &ParentTXPath)
     : m_NBL(NBL)
@@ -25,7 +24,10 @@ CNBL::~CNBL()
     {
         auto NBL = DetachInternalObject();
         NET_BUFFER_LIST_NEXT_NBL(NBL) = nullptr;
+
+        ParaNdis_DecreasePending(m_Context, NBL, __FUNCTION__);
         NdisMSendNetBufferListsComplete(m_Context->MiniportHandle, NBL, 0);
+        ParaNdis_TestPausing(m_Context);
     }
 }
 
@@ -273,6 +275,7 @@ bool CParaNdisTX::Create(PPARANDIS_ADAPTER Context, UINT DeviceQueueIndex)
 void CParaNdisTX::Send(PNET_BUFFER_LIST NBL)
 {
     PNET_BUFFER_LIST nextNBL = nullptr;
+    BOOLEAN isSendPossible;
 
     for(auto currNBL = NBL; currNBL != nullptr; currNBL = nextNBL)
     {
@@ -289,8 +292,19 @@ void CParaNdisTX::Send(PNET_BUFFER_LIST NBL)
             continue;
         }
 
-        if(NBLHolder->Prepare() &&
-           ParaNdis_IsSendPossible(m_Context))
+        {
+            CNdisPassiveReadAutoLock tLock(m_Context->m_PauseLock);
+
+            isSendPossible = ParaNdis_IsSendPossible(m_Context);
+            PNET_BUFFER NB = NET_BUFFER_LIST_FIRST_NB(currNBL);
+
+            while (NB) {
+                m_Context->m_packetPending.AddRef();
+                NB = NET_BUFFER_NEXT_NB(NB);
+            }
+        }
+
+        if(NBLHolder->Prepare() && isSendPossible)
         {
             NBLHolder->StartMapping();
         }
@@ -353,10 +367,6 @@ void CNBL::CompleteMappedBuffers()
 
 PNET_BUFFER_LIST CNBL::DetachInternalObject()
 {
-    m_MappedBuffers.ForEach([this](CNB *NB)
-    {
-        NB->ReleaseResources();
-    });
 
     // do it for both LsoV1 and LsoV2
     if (IsLSO())
@@ -424,7 +434,9 @@ bool CParaNdisTX::Pause()
 
     if(NBL != nullptr)
     {
+        ParaNdis_DecreasePending(m_Context, NBL, __FUNCTION__);
         NdisMSendNetBufferListsComplete(m_Context->MiniportHandle, NBL, 0);
+        ParaNdis_TestPausing(m_Context);
     }
 
     return res;
@@ -453,7 +465,9 @@ void CParaNdisTX::CancelNBLs(PVOID CancelId)
     auto CanceledNBLs = BuildCancelList(CancelId);
     if (CanceledNBLs != nullptr)
     {
+        ParaNdis_DecreasePending(m_Context, CanceledNBLs, __FUNCTION__);
         NdisMSendNetBufferListsComplete(m_Context->MiniportHandle, CanceledNBLs, 0);
+        ParaNdis_TestPausing(m_Context);
     }
 }
 
@@ -488,7 +502,7 @@ bool CParaNdisTX::SendMapped(bool IsInterrupt, PNET_BUFFER_LIST &NBLFailNow)
         NBLFailNow = RemoveAllNonWaitingNBLs();
         if (NBLFailNow)
         {
-            DPrintf(0, (__FUNCTION__ " Failing send"));
+            DPrintf(0, ("[%s] Failing send", __FUNCTION__));
         }
     }
     else
@@ -515,9 +529,7 @@ bool CParaNdisTX::SendMapped(bool IsInterrupt, PNET_BUFFER_LIST &NBLFailNow)
                     break;
 
                 case SUBMIT_FAILURE:
-                    __fallthrough;
                 case SUBMIT_SUCCESS:
-                    __fallthrough;
                 case SUBMIT_PACKET_TOO_LARGE:
                     // if this NBL finished?
                     if (!NBLHolder->HaveMappedBuffers())
@@ -573,7 +585,6 @@ bool CParaNdisTX::SendMapped(bool IsInterrupt, PNET_BUFFER_LIST &NBLFailNow)
 
 bool CParaNdisTX::DoPendingTasks(bool IsInterrupt)
 {
-    ONPAUSECOMPLETEPROC CallbackToCall = nullptr;
     PNET_BUFFER_LIST pNBLFailNow = nullptr;
     PNET_BUFFER_LIST pNBLReturnNow = nullptr;
     bool bDoKick = false;
@@ -583,38 +594,22 @@ bool CParaNdisTX::DoPendingTasks(bool IsInterrupt)
                     m_VirtQueue.ProcessTXCompletions();
                     bDoKick = SendMapped(IsInterrupt, pNBLFailNow);
                     pNBLReturnNow = ProcessWaitingList();
-                    {
-                        CNdisPassiveWriteAutoLock tLock(m_Context->m_PauseLock);
-
-                        NdisDprAcquireSpinLock(&m_Context->m_CompletionLock);
-
-                        if (m_Context->SendState == srsPausing && !ParaNdis_HasPacketsInHW(m_Context))
-                        {
-                            CallbackToCall = m_Context->SendPauseCompletionProc;
-                            m_Context->SendPauseCompletionProc = nullptr;
-                            m_Context->SendState = srsDisabled;
-                        }
-                    }
                  });
 
     if (pNBLFailNow)
     {
+        ParaNdis_DecreasePending(m_Context, pNBLFailNow, "CParaNdisTX::DoPendingTasks fail ");
         NdisMSendNetBufferListsComplete(m_Context->MiniportHandle, pNBLFailNow,
-                                        NDIS_SEND_COMPLETE_FLAGS_DISPATCH_LEVEL);
+            NDIS_SEND_COMPLETE_FLAGS_DISPATCH_LEVEL);
+        ParaNdis_TestPausing(m_Context);
     }
 
     if (pNBLReturnNow)
     {
+        ParaNdis_DecreasePending(m_Context, pNBLReturnNow, "CParaNdisTX::DoPendingTasks return ");
         NdisMSendNetBufferListsComplete(m_Context->MiniportHandle, pNBLReturnNow,
-                                        NDIS_SEND_COMPLETE_FLAGS_DISPATCH_LEVEL);
-    }
-
-#pragma warning(suppress: 26110)
-    NdisDprReleaseSpinLock(&m_Context->m_CompletionLock);
-
-    if (CallbackToCall != nullptr)
-    {
-        CallbackToCall(m_Context);
+            NDIS_SEND_COMPLETE_FLAGS_DISPATCH_LEVEL);
+        ParaNdis_TestPausing(m_Context);
     }
 
     return bDoKick;
@@ -633,15 +628,6 @@ CNB::~CNB()
     if(m_SGL != nullptr)
     {
         NdisMFreeNetBufferSGList(m_Context->DmaHandle, m_SGL, m_NB);
-    }
-}
-
-void CNB::ReleaseResources()
-{
-    if (m_SGL != nullptr)
-    {
-        NdisMFreeNetBufferSGList(m_Context->DmaHandle, m_SGL, m_NB);
-        m_SGL = nullptr;
     }
 }
 
@@ -856,7 +842,7 @@ bool CNB::Copy(PVOID Dst, ULONG Length) const
         PVOID CurrAddr;
 
 #if NDIS_SUPPORT_NDIS620
-        NdisQueryMdl(CurrMDL, &CurrAddr, &CurrLen, LowPagePriority | MdlMappingNoExecute);
+        NdisQueryMdl(CurrMDL, &CurrAddr, &CurrLen, static_cast<MM_PAGE_PRIORITY>(LowPagePriority | MdlMappingNoExecute));
 #else
         NdisQueryMdl(CurrMDL, &CurrAddr, &CurrLen, LowPagePriority);
 #endif

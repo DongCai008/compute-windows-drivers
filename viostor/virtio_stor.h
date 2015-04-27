@@ -1,5 +1,5 @@
 /**********************************************************************
- * Copyright (c) 2008-2015 Red Hat, Inc.
+ * Copyright (c) 2008  Red Hat, Inc.
  *
  * File: virtio_stor.h
  *
@@ -125,11 +125,11 @@ typedef struct _ADAPTER_EXTENSION {
     BOOLEAN               sn_ok;
     blk_req               vbr;
     BOOLEAN               indirect;
-    ULONGLONG             lastLBA;
 #ifdef USE_STORPORT
     LIST_ENTRY            complete_list;
     STOR_DPC              completion_dpc;
     BOOLEAN               dpc_ok;
+    ULONG                 in_fly;
 #endif
 }ADAPTER_EXTENSION, *PADAPTER_EXTENSION;
 

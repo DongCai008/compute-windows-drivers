@@ -1,5 +1,5 @@
 /**********************************************************************
- * Copyright (c) 2008-2015 Red Hat, Inc.
+ * Copyright (c) 2008  Red Hat, Inc.
  *
  * File: ParaNdis6-Oid.c
  *
@@ -13,7 +13,6 @@
 
 #include "ParaNdis-Oid.h"
 #include "ParaNdis6.h"
-#include <sal.h>
 
 static NDIS_IO_WORKITEM_FUNCTION OnSetPowerWorkItem;
 
@@ -372,7 +371,7 @@ static NDIS_STATUS ParaNdis_OidQuery(PARANDIS_ADAPTER *pContext, tOidDesc *pOid)
     BOOLEAN bFreeInfo = FALSE;
     LONGLONG ul64LinkSpeed = 0;
 
-#define SETINFO(field, value) pInfo = &u.##field; ulSize = sizeof(u.##field); u.##field = (value)
+#define SETINFO(field, value) pInfo = &u.field; ulSize = sizeof(u.field); u.field = (value)
     switch(pOid->Oid)
     {
         case OID_GEN_LINK_SPEED:
@@ -476,7 +475,6 @@ NDIS_STATUS ParaNdis6_OidRequest(
                 status = NDIS_STATUS_NOT_SUPPORTED;
                 break;
             }
-            __fallthrough;
         case NdisRequestQueryInformation:
             if (Rules.Flags & ohfQuery)
             {
@@ -763,7 +761,7 @@ static void BuildOffloadStatusReport(
 {
     // see
 #if 1
-#define SYNC_STRUCT(_struct, field) update->##_struct.##field = (Current->##_struct.##field == NDIS_OFFLOAD_SUPPORTED) ? NDIS_OFFLOAD_SET_ON : NDIS_OFFLOAD_SET_OFF
+#define SYNC_STRUCT(_struct, field) update->_struct.field = (Current->_struct.field == NDIS_OFFLOAD_SUPPORTED) ? NDIS_OFFLOAD_SET_ON : NDIS_OFFLOAD_SET_OFF
 #define SYNC_FIELD_TX4(field) SYNC_STRUCT(IPv4Transmit,field)
 #define SYNC_FIELD_RX4(field) SYNC_STRUCT(IPv4Receive,field)
 #define SYNC_FIELD_TX6(field) SYNC_STRUCT(IPv6Transmit,field)
@@ -900,7 +898,6 @@ static ULONG SetOffloadField(
             }
             break;
         case NDIS_OFFLOAD_PARAMETERS_NO_CHANGE:
-            __fallthrough;
         default:
             break;
         }

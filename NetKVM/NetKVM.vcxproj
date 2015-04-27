@@ -259,7 +259,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Vista Debug|Win32'">
     <ClCompile>
       <AdditionalIncludeDirectories>wlh;Common;..\Virtio;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;%(PreprocessorDefinitions);NDIS60_MINIPORT=1;NDIS_MINIPORT_DRIVER;;BINARY_COMPATIBLE=0;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);DRIVER_NT_TARGET_VERSION=60</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;%(PreprocessorDefinitions);NDIS60_MINIPORT=1;NDIS_MINIPORT_DRIVER;;BINARY_COMPATIBLE=0;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);DRIVER_NT_TARGET_VERSION=$(DRIVER_NT_TARGET_VERSION)</PreprocessorDefinitions>
       <EnablePREfast>true</EnablePREfast>
     </ClCompile>
     <PreBuildEvent>
@@ -272,39 +272,7 @@
     </PreBuildEvent>
     <ResourceCompile>
       <AdditionalIncludeDirectories>$(SDK_INC_PATH);%(AdditionalIncludeDirectories);Common</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;%(PreprocessorDefinitions);;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);_RHEL_RELEASE_VERSION_=$(_RHEL_RELEASE_VERSION_);DRIVER_NT_TARGET_VERSION=60</PreprocessorDefinitions>
-    </ResourceCompile>
-    <Link>
-      <AdditionalDependencies>%(AdditionalDependencies);$(DDK_LIB_PATH)\ndis.lib</AdditionalDependencies>
-    </Link>
-    <DriverSign>
-      <AdditionalOptions>
-      </AdditionalOptions>
-    </DriverSign>
-    <PostBuildEvent>
-      <Command>tools\make_inf.bat $(SolutionDir)$(PlatformTarget)\$(ConfigurationName)\ $(DDKSpec)</Command>
-    </PostBuildEvent>
-    <PostBuildEvent>
-      <Message>Compile INF file for all platforms</Message>
-    </PostBuildEvent>
-  </ItemDefinitionGroup>
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Win8.1 Debug|Win32'">
-    <ClCompile>
-      <AdditionalIncludeDirectories>wlh;Common;..\Virtio;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;%(PreprocessorDefinitions);NDIS630_MINIPORT=1;NDIS_MINIPORT_DRIVER;BINARY_COMPATIBLE=0;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);DRIVER_NT_TARGET_VERSION=63</PreprocessorDefinitions>
-      <EnablePREfast>true</EnablePREfast>
-    </ClCompile>
-    <PreBuildEvent>
-      <Command>
-      </Command>
-    </PreBuildEvent>
-    <PreBuildEvent>
-      <Message>
-      </Message>
-    </PreBuildEvent>
-    <ResourceCompile>
-      <AdditionalIncludeDirectories>$(SDK_INC_PATH);%(AdditionalIncludeDirectories);Common</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;%(PreprocessorDefinitions);;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);_RHEL_RELEASE_VERSION_=$(_RHEL_RELEASE_VERSION_);DRIVER_NT_TARGET_VERSION=63</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;%(PreprocessorDefinitions);;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);_RHEL_RELEASE_VERSION_=$(_RHEL_RELEASE_VERSION_);DRIVER_NT_TARGET_VERSION=$(DRIVER_NT_TARGET_VERSION)</PreprocessorDefinitions>
     </ResourceCompile>
     <Link>
       <AdditionalDependencies>%(AdditionalDependencies);$(DDK_LIB_PATH)\ndis.lib</AdditionalDependencies>
@@ -320,13 +288,48 @@
       <Message>Compile INF file for all platforms</Message>
     </PostBuildEvent>
     <Inf>
-      <TimeStamp>63$(STAMPINF_RHEL_VERSION)</TimeStamp>
+      <TimeStamp>$(STAMPINF_VERSION)" "</TimeStamp>
+    </Inf>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Win8.1 Debug|Win32'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>wlh;Common;..\Virtio;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;%(PreprocessorDefinitions);NDIS630_MINIPORT=1;NDIS_MINIPORT_DRIVER;BINARY_COMPATIBLE=0;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);DRIVER_NT_TARGET_VERSION=$(DRIVER_NT_TARGET_VERSION)</PreprocessorDefinitions>
+      <EnablePREfast>true</EnablePREfast>
+    </ClCompile>
+    <PreBuildEvent>
+      <Command>
+      </Command>
+    </PreBuildEvent>
+    <PreBuildEvent>
+      <Message>
+      </Message>
+    </PreBuildEvent>
+    <ResourceCompile>
+      <AdditionalIncludeDirectories>$(SDK_INC_PATH);%(AdditionalIncludeDirectories);Common</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;%(PreprocessorDefinitions);;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);_RHEL_RELEASE_VERSION_=$(_RHEL_RELEASE_VERSION_);DRIVER_NT_TARGET_VERSION=$(DRIVER_NT_TARGET_VERSION)</PreprocessorDefinitions>
+    </ResourceCompile>
+    <Link>
+      <AdditionalDependencies>%(AdditionalDependencies);$(DDK_LIB_PATH)\ndis.lib</AdditionalDependencies>
+    </Link>
+    <DriverSign>
+      <AdditionalOptions>
+      </AdditionalOptions>
+    </DriverSign>
+    <PostBuildEvent>
+      <Command>tools\make_inf.bat $(SolutionDir)$(PlatformTarget)\$(ConfigurationName)\ $(DDKSpec)</Command>
+    </PostBuildEvent>
+    <PostBuildEvent>
+      <Message>Compile INF file for all platforms</Message>
+    </PostBuildEvent>
+    <Inf>
+      <TimeStamp>$(STAMPINF_VERSION)" "</TimeStamp>
     </Inf>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Win8 Debug|Win32'">
     <ClCompile>
       <AdditionalIncludeDirectories>wlh;Common;..\Virtio;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;%(PreprocessorDefinitions);NDIS630_MINIPORT=1;NDIS_MINIPORT_DRIVER;BINARY_COMPATIBLE=0;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);DRIVER_NT_TARGET_VERSION=62</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;%(PreprocessorDefinitions);NDIS630_MINIPORT=1;NDIS_MINIPORT_DRIVER;BINARY_COMPATIBLE=0;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);DRIVER_NT_TARGET_VERSION=$(DRIVER_NT_TARGET_VERSION)</PreprocessorDefinitions>
       <EnablePREfast>false</EnablePREfast>
     </ClCompile>
     <PreBuildEvent>
@@ -339,7 +342,7 @@
     </PreBuildEvent>
     <ResourceCompile>
       <AdditionalIncludeDirectories>$(SDK_INC_PATH);%(AdditionalIncludeDirectories);Common</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;%(PreprocessorDefinitions);;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);_RHEL_RELEASE_VERSION_=$(_RHEL_RELEASE_VERSION_);DRIVER_NT_TARGET_VERSION=62</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;%(PreprocessorDefinitions);;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);_RHEL_RELEASE_VERSION_=$(_RHEL_RELEASE_VERSION_);DRIVER_NT_TARGET_VERSION=$(DRIVER_NT_TARGET_VERSION)</PreprocessorDefinitions>
     </ResourceCompile>
     <Link>
       <AdditionalDependencies>%(AdditionalDependencies);$(DDK_LIB_PATH)\ndis.lib</AdditionalDependencies>
@@ -355,13 +358,13 @@
       <Message>Compile INF file for all platforms</Message>
     </PostBuildEvent>
     <Inf>
-      <TimeStamp>62$(STAMPINF_RHEL_VERSION)</TimeStamp>
+      <TimeStamp>$(STAMPINF_VERSION)" "</TimeStamp>
     </Inf>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Vista Release|Win32'">
     <ClCompile>
       <AdditionalIncludeDirectories>wlh;Common;..\Virtio;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;%(PreprocessorDefinitions);NDIS60_MINIPORT=1;NDIS_MINIPORT_DRIVER;BINARY_COMPATIBLE=0;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);DRIVER_NT_TARGET_VERSION=60</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;%(PreprocessorDefinitions);NDIS60_MINIPORT=1;NDIS_MINIPORT_DRIVER;BINARY_COMPATIBLE=0;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);DRIVER_NT_TARGET_VERSION=$(DRIVER_NT_TARGET_VERSION)</PreprocessorDefinitions>
       <EnablePREfast>true</EnablePREfast>
     </ClCompile>
     <PreBuildEvent>
@@ -374,7 +377,7 @@
     </PreBuildEvent>
     <ResourceCompile>
       <AdditionalIncludeDirectories>$(SDK_INC_PATH);%(AdditionalIncludeDirectories);Common</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;%(PreprocessorDefinitions);;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);_RHEL_RELEASE_VERSION_=$(_RHEL_RELEASE_VERSION_);DRIVER_NT_TARGET_VERSION=60</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;%(PreprocessorDefinitions);;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);_RHEL_RELEASE_VERSION_=$(_RHEL_RELEASE_VERSION_);DRIVER_NT_TARGET_VERSION=$(DRIVER_NT_TARGET_VERSION)</PreprocessorDefinitions>
     </ResourceCompile>
     <Link>
       <AdditionalDependencies>%(AdditionalDependencies);$(DDK_LIB_PATH)\ndis.lib</AdditionalDependencies>
@@ -389,11 +392,14 @@
     <PostBuildEvent>
       <Message>Compile INF file for all platforms</Message>
     </PostBuildEvent>
+    <Inf>
+      <TimeStamp>$(STAMPINF_VERSION)" "</TimeStamp>
+    </Inf>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Win7 Debug|Win32'">
     <ClCompile>
       <AdditionalIncludeDirectories>wlh;Common;..\Virtio;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;%(PreprocessorDefinitions);NDIS620_MINIPORT=1;NDIS_MINIPORT_DRIVER;;BINARY_COMPATIBLE=0;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);DRIVER_NT_TARGET_VERSION=61</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;%(PreprocessorDefinitions);NDIS620_MINIPORT=1;NDIS_MINIPORT_DRIVER;;BINARY_COMPATIBLE=0;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);DRIVER_NT_TARGET_VERSION=$(DRIVER_NT_TARGET_VERSION)</PreprocessorDefinitions>
       <EnablePREfast>false</EnablePREfast>
     </ClCompile>
     <PreBuildEvent>
@@ -406,7 +412,7 @@
     </PreBuildEvent>
     <ResourceCompile>
       <AdditionalIncludeDirectories>$(SDK_INC_PATH);%(AdditionalIncludeDirectories);Common</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;%(PreprocessorDefinitions);;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);_RHEL_RELEASE_VERSION_=$(_RHEL_RELEASE_VERSION_);DRIVER_NT_TARGET_VERSION=61</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;%(PreprocessorDefinitions);;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);_RHEL_RELEASE_VERSION_=$(_RHEL_RELEASE_VERSION_);DRIVER_NT_TARGET_VERSION=$(DRIVER_NT_TARGET_VERSION)</PreprocessorDefinitions>
     </ResourceCompile>
     <Link>
       <AdditionalDependencies>%(AdditionalDependencies);$(DDK_LIB_PATH)\ndis.lib</AdditionalDependencies>
@@ -424,13 +430,13 @@
       <Message>Compile INF file for all platforms</Message>
     </PostBuildEvent>
     <Inf>
-      <TimeStamp>61$(STAMPINF_RHEL_VERSION)</TimeStamp>
+      <TimeStamp>$(STAMPINF_VERSION)" "</TimeStamp>
     </Inf>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Win7 Release|Win32'">
     <ClCompile>
       <AdditionalIncludeDirectories>wlh;Common;..\Virtio;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;%(PreprocessorDefinitions);NDIS620_MINIPORT=1;NDIS_MINIPORT_DRIVER;;BINARY_COMPATIBLE=0;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);DRIVER_NT_TARGET_VERSION=61</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;%(PreprocessorDefinitions);NDIS620_MINIPORT=1;NDIS_MINIPORT_DRIVER;;BINARY_COMPATIBLE=0;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);DRIVER_NT_TARGET_VERSION=$(DRIVER_NT_TARGET_VERSION)</PreprocessorDefinitions>
       <EnablePREfast>false</EnablePREfast>
     </ClCompile>
     <PreBuildEvent>
@@ -443,7 +449,7 @@
     </PreBuildEvent>
     <ResourceCompile>
       <AdditionalIncludeDirectories>$(SDK_INC_PATH);%(AdditionalIncludeDirectories);Common</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;%(PreprocessorDefinitions);;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);_RHEL_RELEASE_VERSION_=$(_RHEL_RELEASE_VERSION_);DRIVER_NT_TARGET_VERSION=61</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;%(PreprocessorDefinitions);;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);_RHEL_RELEASE_VERSION_=$(_RHEL_RELEASE_VERSION_);DRIVER_NT_TARGET_VERSION=$(DRIVER_NT_TARGET_VERSION)</PreprocessorDefinitions>
     </ResourceCompile>
     <Link>
       <AdditionalDependencies>%(AdditionalDependencies);$(DDK_LIB_PATH)\ndis.lib</AdditionalDependencies>
@@ -459,13 +465,13 @@
       <Message>Compile INF file for all platforms</Message>
     </PostBuildEvent>
     <Inf>
-      <TimeStamp>61$(STAMPINF_RHEL_VERSION)</TimeStamp>
+      <TimeStamp>$(STAMPINF_VERSION)" "</TimeStamp>
     </Inf>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Vista Release|Win32'">
     <ClCompile>
       <AdditionalIncludeDirectories>wlh;Common;..\Virtio;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;NDIS60_MINIPORT=1;NDIS_MINIPORT_DRIVER;BINARY_COMPATIBLE=0;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=0x0600;DRIVER_NT_TARGET_VERSION=60;_WIN32_WINNT=0x0600;WINVER=0x0600;NTDDI_VERSION=0x06000000;DRIVER_NT_TARGET_VERSION=0x60</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;NDIS60_MINIPORT=1;NDIS_MINIPORT_DRIVER;BINARY_COMPATIBLE=0;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=0x0600;DRIVER_NT_TARGET_VERSION=$(DRIVER_NT_TARGET_VERSION);_WIN32_WINNT=0x0600;WINVER=0x0600;NTDDI_VERSION=0x06000000;DRIVER_NT_TARGET_VERSION=0x60</PreprocessorDefinitions>
       <EnablePREfast>false</EnablePREfast>
       <ForcedIncludeFiles>warning.h</ForcedIncludeFiles>
       <AdditionalOptions>/kernel</AdditionalOptions>
@@ -480,7 +486,7 @@
     </PreBuildEvent>
     <ResourceCompile>
       <AdditionalIncludeDirectories>Common;C:\WinDDK\7600.16385.1\inc\api</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;%(PreprocessorDefinitions);;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);_RHEL_RELEASE_VERSION_=$(_RHEL_RELEASE_VERSION_);DRIVER_NT_TARGET_VERSION=60</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;%(PreprocessorDefinitions);;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);_RHEL_RELEASE_VERSION_=$(_RHEL_RELEASE_VERSION_);DRIVER_NT_TARGET_VERSION=$(DRIVER_NT_TARGET_VERSION)</PreprocessorDefinitions>
     </ResourceCompile>
     <Link>
       <AdditionalDependencies>ndis.lib;ntoskrnl.lib;BufferOverflowK.lib;hal.lib</AdditionalDependencies>
@@ -499,13 +505,13 @@
       <Message>Compile INF file for all platforms</Message>
     </PostBuildEvent>
     <Inf>
-      <TimeStamp>60$(STAMPINF_RHEL_VERSION)</TimeStamp>
+      <TimeStamp>$(STAMPINF_VERSION)" "</TimeStamp>
     </Inf>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Win8.1 Release|Win32'">
     <ClCompile>
       <AdditionalIncludeDirectories>wlh;Common;..\Virtio;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;%(PreprocessorDefinitions);NDIS630_MINIPORT=1;NDIS_MINIPORT_DRIVER;;BINARY_COMPATIBLE=0;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);DRIVER_NT_TARGET_VERSION=63</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;%(PreprocessorDefinitions);NDIS630_MINIPORT=1;NDIS_MINIPORT_DRIVER;;BINARY_COMPATIBLE=0;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);DRIVER_NT_TARGET_VERSION=$(DRIVER_NT_TARGET_VERSION)</PreprocessorDefinitions>
       <EnablePREfast>false</EnablePREfast>
     </ClCompile>
     <PreBuildEvent>
@@ -518,7 +524,7 @@
     </PreBuildEvent>
     <ResourceCompile>
       <AdditionalIncludeDirectories>$(SDK_INC_PATH);%(AdditionalIncludeDirectories);Common</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;%(PreprocessorDefinitions);PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);_RHEL_RELEASE_VERSION_=$(_RHEL_RELEASE_VERSION_);DRIVER_NT_TARGET_VERSION=63</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;%(PreprocessorDefinitions);PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);_RHEL_RELEASE_VERSION_=$(_RHEL_RELEASE_VERSION_);DRIVER_NT_TARGET_VERSION=$(DRIVER_NT_TARGET_VERSION)</PreprocessorDefinitions>
     </ResourceCompile>
     <Link>
       <AdditionalDependencies>%(AdditionalDependencies);$(DDK_LIB_PATH)\ndis.lib</AdditionalDependencies>
@@ -534,13 +540,13 @@
       <Message>Compile INF file for all platforms</Message>
     </PostBuildEvent>
     <Inf>
-      <TimeStamp>63$(STAMPINF_RHEL_VERSION)</TimeStamp>
+      <TimeStamp>$(STAMPINF_VERSION)" "</TimeStamp>
     </Inf>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Win8 Release|Win32'">
     <ClCompile>
       <AdditionalIncludeDirectories>wlh;Common;..\Virtio;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;%(PreprocessorDefinitions);NDIS630_MINIPORT=1;NDIS_MINIPORT_DRIVER;;BINARY_COMPATIBLE=0;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);DRIVER_NT_TARGET_VERSION=62</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;%(PreprocessorDefinitions);NDIS630_MINIPORT=1;NDIS_MINIPORT_DRIVER;;BINARY_COMPATIBLE=0;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);DRIVER_NT_TARGET_VERSION=$(DRIVER_NT_TARGET_VERSION)</PreprocessorDefinitions>
       <EnablePREfast>false</EnablePREfast>
     </ClCompile>
     <PreBuildEvent>
@@ -553,7 +559,7 @@
     </PreBuildEvent>
     <ResourceCompile>
       <AdditionalIncludeDirectories>$(SDK_INC_PATH);%(AdditionalIncludeDirectories);Common</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;%(PreprocessorDefinitions);PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);_RHEL_RELEASE_VERSION_=$(_RHEL_RELEASE_VERSION_);DRIVER_NT_TARGET_VERSION=62</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;%(PreprocessorDefinitions);PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);_RHEL_RELEASE_VERSION_=$(_RHEL_RELEASE_VERSION_);DRIVER_NT_TARGET_VERSION=$(DRIVER_NT_TARGET_VERSION)</PreprocessorDefinitions>
     </ResourceCompile>
     <Link>
       <AdditionalDependencies>%(AdditionalDependencies);$(DDK_LIB_PATH)\ndis.lib</AdditionalDependencies>
@@ -569,13 +575,13 @@
       <Message>Compile INF file for all platforms</Message>
     </PostBuildEvent>
     <Inf>
-      <TimeStamp>62$(STAMPINF_RHEL_VERSION)</TimeStamp>
+      <TimeStamp>$(STAMPINF_VERSION)" "</TimeStamp>
     </Inf>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Vista Debug|x64'">
     <ClCompile>
       <AdditionalIncludeDirectories>wlh;Common;..\Virtio;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_WIN64;_AMD64_;AMD64;%(PreprocessorDefinitions);NDIS60_MINIPORT=1;NDIS_MINIPORT_DRIVER;;BINARY_COMPATIBLE=0;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);DRIVER_NT_TARGET_VERSION=60</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_WIN64;_AMD64_;AMD64;%(PreprocessorDefinitions);NDIS60_MINIPORT=1;NDIS_MINIPORT_DRIVER;;BINARY_COMPATIBLE=0;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);DRIVER_NT_TARGET_VERSION=$(DRIVER_NT_TARGET_VERSION)</PreprocessorDefinitions>
       <EnablePREfast>true</EnablePREfast>
     </ClCompile>
     <PreBuildEvent>
@@ -588,39 +594,7 @@
     </PreBuildEvent>
     <ResourceCompile>
       <AdditionalIncludeDirectories>$(SDK_INC_PATH);%(AdditionalIncludeDirectories);Common</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_WIN64;_AMD64_=1;AMD64;%(PreprocessorDefinitions);;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);_RHEL_RELEASE_VERSION_=$(_RHEL_RELEASE_VERSION_);DRIVER_NT_TARGET_VERSION=60</PreprocessorDefinitions>
-    </ResourceCompile>
-    <Link>
-      <AdditionalDependencies>%(AdditionalDependencies);$(DDK_LIB_PATH)\ndis.lib</AdditionalDependencies>
-    </Link>
-    <DriverSign>
-      <AdditionalOptions>
-      </AdditionalOptions>
-    </DriverSign>
-    <PostBuildEvent>
-      <Command>tools\make_inf.bat $(SolutionDir)$(PlatformTarget)\$(ConfigurationName)\ $(DDKSpec)</Command>
-    </PostBuildEvent>
-    <PostBuildEvent>
-      <Message>Compile INF file for all platforms</Message>
-    </PostBuildEvent>
-  </ItemDefinitionGroup>
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Win8.1 Debug|x64'">
-    <ClCompile>
-      <AdditionalIncludeDirectories>wlh;Common;..\Virtio;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_WIN64;_AMD64_;AMD64;%(PreprocessorDefinitions);NDIS630_MINIPORT=1;NDIS_MINIPORT_DRIVER;;BINARY_COMPATIBLE=0;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);DRIVER_NT_TARGET_VERSION=63</PreprocessorDefinitions>
-      <EnablePREfast>false</EnablePREfast>
-    </ClCompile>
-    <PreBuildEvent>
-      <Command>
-      </Command>
-    </PreBuildEvent>
-    <PreBuildEvent>
-      <Message>
-      </Message>
-    </PreBuildEvent>
-    <ResourceCompile>
-      <AdditionalIncludeDirectories>$(SDK_INC_PATH);%(AdditionalIncludeDirectories);Common</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_WIN64;_AMD64_=1;AMD64;%(PreprocessorDefinitions);;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);_RHEL_RELEASE_VERSION_=$(_RHEL_RELEASE_VERSION_);DRIVER_NT_TARGET_VERSION=63</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_WIN64;_AMD64_=1;AMD64;%(PreprocessorDefinitions);;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);_RHEL_RELEASE_VERSION_=$(_RHEL_RELEASE_VERSION_);DRIVER_NT_TARGET_VERSION=$(DRIVER_NT_TARGET_VERSION)</PreprocessorDefinitions>
     </ResourceCompile>
     <Link>
       <AdditionalDependencies>%(AdditionalDependencies);$(DDK_LIB_PATH)\ndis.lib</AdditionalDependencies>
@@ -636,13 +610,48 @@
       <Message>Compile INF file for all platforms</Message>
     </PostBuildEvent>
     <Inf>
-      <TimeStamp>63$(STAMPINF_RHEL_VERSION)</TimeStamp>
+      <TimeStamp>$(STAMPINF_VERSION)" "</TimeStamp>
+    </Inf>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Win8.1 Debug|x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>wlh;Common;..\Virtio;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_WIN64;_AMD64_;AMD64;%(PreprocessorDefinitions);NDIS630_MINIPORT=1;NDIS_MINIPORT_DRIVER;;BINARY_COMPATIBLE=0;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);DRIVER_NT_TARGET_VERSION=$(DRIVER_NT_TARGET_VERSION)</PreprocessorDefinitions>
+      <EnablePREfast>false</EnablePREfast>
+    </ClCompile>
+    <PreBuildEvent>
+      <Command>
+      </Command>
+    </PreBuildEvent>
+    <PreBuildEvent>
+      <Message>
+      </Message>
+    </PreBuildEvent>
+    <ResourceCompile>
+      <AdditionalIncludeDirectories>$(SDK_INC_PATH);%(AdditionalIncludeDirectories);Common</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_WIN64;_AMD64_=1;AMD64;%(PreprocessorDefinitions);;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);_RHEL_RELEASE_VERSION_=$(_RHEL_RELEASE_VERSION_);DRIVER_NT_TARGET_VERSION=$(DRIVER_NT_TARGET_VERSION)</PreprocessorDefinitions>
+    </ResourceCompile>
+    <Link>
+      <AdditionalDependencies>%(AdditionalDependencies);$(DDK_LIB_PATH)\ndis.lib</AdditionalDependencies>
+    </Link>
+    <DriverSign>
+      <AdditionalOptions>
+      </AdditionalOptions>
+    </DriverSign>
+    <PostBuildEvent>
+      <Command>tools\make_inf.bat $(SolutionDir)$(PlatformTarget)\$(ConfigurationName)\ $(DDKSpec)</Command>
+    </PostBuildEvent>
+    <PostBuildEvent>
+      <Message>Compile INF file for all platforms</Message>
+    </PostBuildEvent>
+    <Inf>
+      <TimeStamp>$(STAMPINF_VERSION)" "</TimeStamp>
     </Inf>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Win8 Debug|x64'">
     <ClCompile>
       <AdditionalIncludeDirectories>wlh;Common;..\Virtio;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_WIN64;_AMD64_;AMD64;%(PreprocessorDefinitions);NDIS630_MINIPORT=1;NDIS_MINIPORT_DRIVER;;BINARY_COMPATIBLE=0;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);DRIVER_NT_TARGET_VERSION=62</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_WIN64;_AMD64_;AMD64;%(PreprocessorDefinitions);NDIS630_MINIPORT=1;NDIS_MINIPORT_DRIVER;;BINARY_COMPATIBLE=0;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);DRIVER_NT_TARGET_VERSION=$(DRIVER_NT_TARGET_VERSION)</PreprocessorDefinitions>
       <EnablePREfast>false</EnablePREfast>
     </ClCompile>
     <PreBuildEvent>
@@ -655,7 +664,7 @@
     </PreBuildEvent>
     <ResourceCompile>
       <AdditionalIncludeDirectories>$(SDK_INC_PATH);%(AdditionalIncludeDirectories);Common</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_WIN64;_AMD64_=1;AMD64;%(PreprocessorDefinitions);;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);_RHEL_RELEASE_VERSION_=$(_RHEL_RELEASE_VERSION_);DRIVER_NT_TARGET_VERSION=62</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_WIN64;_AMD64_=1;AMD64;%(PreprocessorDefinitions);;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);_RHEL_RELEASE_VERSION_=$(_RHEL_RELEASE_VERSION_);DRIVER_NT_TARGET_VERSION=$(DRIVER_NT_TARGET_VERSION)</PreprocessorDefinitions>
     </ResourceCompile>
     <Link>
       <AdditionalDependencies>%(AdditionalDependencies);$(DDK_LIB_PATH)\ndis.lib</AdditionalDependencies>
@@ -671,13 +680,13 @@
       <Message>Compile INF file for all platforms</Message>
     </PostBuildEvent>
     <Inf>
-      <TimeStamp>62$(STAMPINF_RHEL_VERSION)</TimeStamp>
+      <TimeStamp>$(STAMPINF_VERSION)" "</TimeStamp>
     </Inf>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Vista Release|x64'">
     <ClCompile>
       <AdditionalIncludeDirectories>wlh;Common;..\Virtio;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_WIN64;_AMD64_;AMD64;%(PreprocessorDefinitions);NDIS60_MINIPORT=1;NDIS_MINIPORT_DRIVER;BINARY_COMPATIBLE=0;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);DRIVER_NT_TARGET_VERSION=60</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_WIN64;_AMD64_;AMD64;%(PreprocessorDefinitions);NDIS60_MINIPORT=1;NDIS_MINIPORT_DRIVER;BINARY_COMPATIBLE=0;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);DRIVER_NT_TARGET_VERSION=$(DRIVER_NT_TARGET_VERSION)</PreprocessorDefinitions>
       <EnablePREfast>true</EnablePREfast>
     </ClCompile>
     <PreBuildEvent>
@@ -690,7 +699,7 @@
     </PreBuildEvent>
     <ResourceCompile>
       <AdditionalIncludeDirectories>$(SDK_INC_PATH);%(AdditionalIncludeDirectories);Common</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_WIN64;_AMD64_=1;AMD64;%(PreprocessorDefinitions);;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);_RHEL_RELEASE_VERSION_=$(_RHEL_RELEASE_VERSION_);DRIVER_NT_TARGET_VERSION=60</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_WIN64;_AMD64_=1;AMD64;%(PreprocessorDefinitions);;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);_RHEL_RELEASE_VERSION_=$(_RHEL_RELEASE_VERSION_);DRIVER_NT_TARGET_VERSION=$(DRIVER_NT_TARGET_VERSION)</PreprocessorDefinitions>
     </ResourceCompile>
     <Link>
       <AdditionalDependencies>%(AdditionalDependencies);$(DDK_LIB_PATH)\ndis.lib</AdditionalDependencies>
@@ -706,13 +715,13 @@
       <Message>Compile INF file for all platforms</Message>
     </PostBuildEvent>
     <Inf>
-      <TimeStamp>60$(STAMPINF_RHEL_VERSION)" "</TimeStamp>
+      <TimeStamp>$(STAMPINF_VERSION)" "</TimeStamp>
     </Inf>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Win7 Debug|x64'">
     <ClCompile>
       <AdditionalIncludeDirectories>wlh;Common;..\Virtio;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_WIN64;_AMD64_;AMD64;%(PreprocessorDefinitions);NDIS620_MINIPORT=1;NDIS_MINIPORT_DRIVER;;BINARY_COMPATIBLE=0;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);DRIVER_NT_TARGET_VERSION=61</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_WIN64;_AMD64_;AMD64;%(PreprocessorDefinitions);NDIS620_MINIPORT=1;NDIS_MINIPORT_DRIVER;;BINARY_COMPATIBLE=0;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);DRIVER_NT_TARGET_VERSION=$(DRIVER_NT_TARGET_VERSION)</PreprocessorDefinitions>
       <EnablePREfast>false</EnablePREfast>
     </ClCompile>
     <PreBuildEvent>
@@ -725,7 +734,7 @@
     </PreBuildEvent>
     <ResourceCompile>
       <AdditionalIncludeDirectories>$(SDK_INC_PATH);%(AdditionalIncludeDirectories);Common</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_WIN64;_AMD64_=1;AMD64;%(PreprocessorDefinitions);;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);_RHEL_RELEASE_VERSION_=$(_RHEL_RELEASE_VERSION_);DRIVER_NT_TARGET_VERSION=61</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_WIN64;_AMD64_=1;AMD64;%(PreprocessorDefinitions);;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);_RHEL_RELEASE_VERSION_=$(_RHEL_RELEASE_VERSION_);DRIVER_NT_TARGET_VERSION=$(DRIVER_NT_TARGET_VERSION)</PreprocessorDefinitions>
     </ResourceCompile>
     <Link>
       <AdditionalDependencies>%(AdditionalDependencies);$(DDK_LIB_PATH)\ndis.lib</AdditionalDependencies>
@@ -741,13 +750,13 @@
       <Message>Compile INF file for all platforms</Message>
     </PostBuildEvent>
     <Inf>
-      <TimeStamp>61$(STAMPINF_RHEL_VERSION)</TimeStamp>
+      <TimeStamp>$(STAMPINF_VERSION)" "</TimeStamp>
     </Inf>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Win7 Release|x64'">
     <ClCompile>
       <AdditionalIncludeDirectories>wlh;Common;..\Virtio;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_WIN64;_AMD64_;AMD64;%(PreprocessorDefinitions);NDIS620_MINIPORT=1;NDIS_MINIPORT_DRIVER;;BINARY_COMPATIBLE=0;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);DRIVER_NT_TARGET_VERSION=61</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_WIN64;_AMD64_;AMD64;%(PreprocessorDefinitions);NDIS620_MINIPORT=1;NDIS_MINIPORT_DRIVER;;BINARY_COMPATIBLE=0;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);DRIVER_NT_TARGET_VERSION=$(DRIVER_NT_TARGET_VERSION)</PreprocessorDefinitions>
       <EnablePREfast>false</EnablePREfast>
     </ClCompile>
     <PreBuildEvent>
@@ -760,7 +769,7 @@
     </PreBuildEvent>
     <ResourceCompile>
       <AdditionalIncludeDirectories>$(SDK_INC_PATH);%(AdditionalIncludeDirectories);Common</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_WIN64;_AMD64_=1;AMD64;%(PreprocessorDefinitions);;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);_RHEL_RELEASE_VERSION_=$(_RHEL_RELEASE_VERSION_);DRIVER_NT_TARGET_VERSION=61</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_WIN64;_AMD64_=1;AMD64;%(PreprocessorDefinitions);;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);_RHEL_RELEASE_VERSION_=$(_RHEL_RELEASE_VERSION_);DRIVER_NT_TARGET_VERSION=$(DRIVER_NT_TARGET_VERSION)</PreprocessorDefinitions>
     </ResourceCompile>
     <Link>
       <AdditionalDependencies>%(AdditionalDependencies);$(DDK_LIB_PATH)\ndis.lib</AdditionalDependencies>
@@ -776,13 +785,13 @@
       <Message>Compile INF file for all platforms</Message>
     </PostBuildEvent>
     <Inf>
-      <TimeStamp>61$(STAMPINF_RHEL_VERSION)</TimeStamp>
+      <TimeStamp>$(STAMPINF_VERSION)" "</TimeStamp>
     </Inf>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Win8.1 Release|x64'">
     <ClCompile>
       <AdditionalIncludeDirectories>wlh;Common;..\Virtio;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_WIN64;_AMD64_;AMD64;%(PreprocessorDefinitions);NDIS630_MINIPORT=1;NDIS_MINIPORT_DRIVER;;BINARY_COMPATIBLE=0;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);DRIVER_NT_TARGET_VERSION=63</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_WIN64;_AMD64_;AMD64;%(PreprocessorDefinitions);NDIS630_MINIPORT=1;NDIS_MINIPORT_DRIVER;;BINARY_COMPATIBLE=0;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);DRIVER_NT_TARGET_VERSION=$(DRIVER_NT_TARGET_VERSION)</PreprocessorDefinitions>
       <EnablePREfast>false</EnablePREfast>
     </ClCompile>
     <PreBuildEvent>
@@ -795,7 +804,7 @@
     </PreBuildEvent>
     <ResourceCompile>
       <AdditionalIncludeDirectories>$(SDK_INC_PATH);%(AdditionalIncludeDirectories);Common</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_WIN64;_AMD64_=1;AMD64;%(PreprocessorDefinitions);;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);_RHEL_RELEASE_VERSION_=$(_RHEL_RELEASE_VERSION_);DRIVER_NT_TARGET_VERSION=63</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_WIN64;_AMD64_=1;AMD64;%(PreprocessorDefinitions);;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);_RHEL_RELEASE_VERSION_=$(_RHEL_RELEASE_VERSION_);DRIVER_NT_TARGET_VERSION=$(DRIVER_NT_TARGET_VERSION)</PreprocessorDefinitions>
     </ResourceCompile>
     <Link>
       <AdditionalDependencies>%(AdditionalDependencies);$(DDK_LIB_PATH)\ndis.lib</AdditionalDependencies>
@@ -811,13 +820,13 @@
       <Message>Compile INF file for all platforms</Message>
     </PostBuildEvent>
     <Inf>
-      <TimeStamp>63$(STAMPINF_RHEL_VERSION)" "</TimeStamp>
+      <TimeStamp>$(STAMPINF_VERSION)" "</TimeStamp>
     </Inf>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Vista Release|x64'">
     <ClCompile>
       <AdditionalIncludeDirectories>wlh;Common;..\Virtio;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_WIN64;_AMD64_;AMD64;NDIS60_MINIPORT=1;NDIS_MINIPORT_DRIVER;BINARY_COMPATIBLE=0;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=0x0600;DRIVER_NT_TARGET_VERSION=60;_WIN32_WINNT=0x0600;WINVER=0x0600;NTDDI_VERSION=0x06000000;DRIVER_NT_TARGET_VERSION=0x60</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_WIN64;_AMD64_;AMD64;NDIS60_MINIPORT=1;NDIS_MINIPORT_DRIVER;BINARY_COMPATIBLE=0;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=0x0600;DRIVER_NT_TARGET_VERSION=$(DRIVER_NT_TARGET_VERSION);_WIN32_WINNT=0x0600;WINVER=0x0600;NTDDI_VERSION=0x06000000;DRIVER_NT_TARGET_VERSION=0x60</PreprocessorDefinitions>
       <EnablePREfast>false</EnablePREfast>
       <AdditionalOptions>/kernel</AdditionalOptions>
     </ClCompile>
@@ -831,7 +840,7 @@
     </PreBuildEvent>
     <ResourceCompile>
       <AdditionalIncludeDirectories>Common;C:\WinDDK\7600.16385.1\inc\api</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_WIN64;_AMD64_=1;AMD64;%(PreprocessorDefinitions);;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);_RHEL_RELEASE_VERSION_=$(_RHEL_RELEASE_VERSION_);DRIVER_NT_TARGET_VERSION=60</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_WIN64;_AMD64_=1;AMD64;%(PreprocessorDefinitions);;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);_RHEL_RELEASE_VERSION_=$(_RHEL_RELEASE_VERSION_);DRIVER_NT_TARGET_VERSION=$(DRIVER_NT_TARGET_VERSION)</PreprocessorDefinitions>
     </ResourceCompile>
     <Link>
       <AdditionalDependencies>ndis.lib;ntoskrnl.lib;BufferOverflowK.lib</AdditionalDependencies>
@@ -850,7 +859,7 @@
       <Message>Compile INF file for all platforms</Message>
     </PostBuildEvent>
     <Inf>
-      <TimeStamp>60$(STAMPINF_RHEL_VERSION)</TimeStamp>
+      <TimeStamp>$(STAMPINF_VERSION)" "</TimeStamp>
     </Inf>
     <ProjectReference>
       <LinkLibraryDependencies>true</LinkLibraryDependencies>
@@ -859,7 +868,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Win8.1 Release|x64'">
     <ClCompile>
       <AdditionalIncludeDirectories>wlh;Common;..\Virtio;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_WIN64;_AMD64_;AMD64;%(PreprocessorDefinitions);NDIS630_MINIPORT=1;NDIS_MINIPORT_DRIVER;;BINARY_COMPATIBLE=0;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);DRIVER_NT_TARGET_VERSION=63</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_WIN64;_AMD64_;AMD64;%(PreprocessorDefinitions);NDIS630_MINIPORT=1;NDIS_MINIPORT_DRIVER;;BINARY_COMPATIBLE=0;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);DRIVER_NT_TARGET_VERSION=$(DRIVER_NT_TARGET_VERSION)</PreprocessorDefinitions>
       <EnablePREfast>false</EnablePREfast>
     </ClCompile>
     <PreBuildEvent>
@@ -872,7 +881,7 @@
     </PreBuildEvent>
     <ResourceCompile>
       <AdditionalIncludeDirectories>$(SDK_INC_PATH);%(AdditionalIncludeDirectories);Common</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_WIN64;_AMD64_=1;AMD64;%(PreprocessorDefinitions);;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);_RHEL_RELEASE_VERSION_=$(_RHEL_RELEASE_VERSION_);DRIVER_NT_TARGET_VERSION=63</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_WIN64;_AMD64_=1;AMD64;%(PreprocessorDefinitions);;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);_RHEL_RELEASE_VERSION_=$(_RHEL_RELEASE_VERSION_);DRIVER_NT_TARGET_VERSION=$(DRIVER_NT_TARGET_VERSION)</PreprocessorDefinitions>
     </ResourceCompile>
     <Link>
       <AdditionalDependencies>%(AdditionalDependencies);$(DDK_LIB_PATH)\ndis.lib</AdditionalDependencies>
@@ -888,13 +897,13 @@
       <Message>Compile INF file for all platforms</Message>
     </PostBuildEvent>
     <Inf>
-      <TimeStamp>63$(STAMPINF_RHEL_VERSION)</TimeStamp>
+      <TimeStamp>$(STAMPINF_VERSION)" "</TimeStamp>
     </Inf>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Win8 Release|x64'">
     <ClCompile>
       <AdditionalIncludeDirectories>wlh;Common;..\Virtio;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_WIN64;_AMD64_;AMD64;%(PreprocessorDefinitions);NDIS630_MINIPORT=1;NDIS_MINIPORT_DRIVER;;BINARY_COMPATIBLE=0;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);DRIVER_NT_TARGET_VERSION=62</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_WIN64;_AMD64_;AMD64;%(PreprocessorDefinitions);NDIS630_MINIPORT=1;NDIS_MINIPORT_DRIVER;;BINARY_COMPATIBLE=0;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);DRIVER_NT_TARGET_VERSION=$(DRIVER_NT_TARGET_VERSION)</PreprocessorDefinitions>
       <EnablePREfast>false</EnablePREfast>
     </ClCompile>
     <PreBuildEvent>
@@ -907,7 +916,7 @@
     </PreBuildEvent>
     <ResourceCompile>
       <AdditionalIncludeDirectories>$(SDK_INC_PATH);%(AdditionalIncludeDirectories);Common</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_WIN64;_AMD64_=1;AMD64;%(PreprocessorDefinitions);;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);_RHEL_RELEASE_VERSION_=$(_RHEL_RELEASE_VERSION_);DRIVER_NT_TARGET_VERSION=62</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_WIN64;_AMD64_=1;AMD64;%(PreprocessorDefinitions);;PARANDIS_MAJOR_DRIVER_VERSION=$(_BUILD_MAJOR_VERSION_);PARANDIS_MINOR_DRIVER_VERSION=$(_BUILD_MINOR_VERSION_);_NT_TARGET_VERSION=$(_NT_TARGET_VERSION);_RHEL_RELEASE_VERSION_=$(_RHEL_RELEASE_VERSION_);DRIVER_NT_TARGET_VERSION=$(DRIVER_NT_TARGET_VERSION)</PreprocessorDefinitions>
     </ResourceCompile>
     <Link>
       <AdditionalDependencies>%(AdditionalDependencies);$(DDK_LIB_PATH)\ndis.lib</AdditionalDependencies>
@@ -923,7 +932,7 @@
       <Message>Compile INF file for all platforms</Message>
     </PostBuildEvent>
     <Inf>
-      <TimeStamp>62$(STAMPINF_RHEL_VERSION)</TimeStamp>
+      <TimeStamp>$(STAMPINF_VERSION)" "</TimeStamp>
     </Inf>
   </ItemDefinitionGroup>
   <ItemGroup>

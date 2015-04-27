@@ -3,7 +3,6 @@
 #include "RegAccess.h"
 #include "NetKVMAux.h"
 #include "RegParam.h"
-#include <sal.h>
 
 //This is NetSH Helper GUID {D9C599C4-8DCF-4a6a-93AA-A16FE6D5125C}
 static const GUID NETKVM_HELPER_GUID =
@@ -40,11 +39,6 @@ static bool _NetKVMGetDeviceClassGuids(vector<GUID>& GUIDs)
 
         if(ERROR_INSUFFICIENT_BUFFER == dwErr)
         {
-            /* On first attemp we pass NULL and 0 as GUID array and GUID array size respectively;
-            according to SetupDiClassGuidsFromNameEx, the function sets RequiredSize output formal parameter (&dwNumGuids)
-            to the desired GUID's array size. The static analyzer indicates an error when output parameter from
-            failed funciton is used, so the warning is suppressed */
-#pragma warning(suppress: 6102)
             pguidDevClassPtr = new GUID[dwNumGuids];
         }
         else
@@ -77,29 +71,25 @@ tstring _NetKVMQueryDeviceString(HDEVINFO hDeviceSet, PSP_DEVINFO_DATA DeviceInf
         &dwDataType, (PBYTE)szDeviceString, dwSize, &dwSize))
     {
         DWORD dwErr = GetLastError();
-
+        if(ERROR_INVALID_DATA == dwErr)
+        {
+            delete [] szDeviceString;
+            return tstring();
+        }
         if(ERROR_INSUFFICIENT_BUFFER != dwErr)
         {
             delete [] szDeviceString;
             NETCO_DEBUG_PRINT(TEXT("SetupDiGetDeviceRegistryProperty failed with code ") << dwErr);
             return tstring();
         }
-        /* According to SetupDiGetDeviceRegistryProperty, the RequiredSize output parameter (&dwSize) is set
-          to the required size of PropertyBuffer (szDeviceString) parameter. The static analyzer indicates
-          error when the output paramter from failed function, so the warnings is suppressed */
-#pragma warning(suppress: 6102)
+        if(REG_SZ != dwDataType)
+        {
+            delete [] szDeviceString;
+            NETCO_DEBUG_PRINT(TEXT("SetupDiGetDeviceRegistryProperty(string) returned incorrect data type ") << dwDataType);
+            return tstring();
+        }
         szDeviceString = new TCHAR[(dwSize/sizeof(TCHAR))+1];
     }
-    if (REG_SZ != dwDataType)
-    {
-#pragma warning(suppress: 6102)
-        delete[] szDeviceString;
-        NETCO_DEBUG_PRINT(TEXT("SetupDiGetDeviceRegistryProperty(string) returned incorrect data type ") << dwDataType);
-        return tstring();
-    }
-
-#pragma warning(suppress: 6102)
-#pragma warning(suppress: 6011)
     szDeviceString[dwSize/sizeof(TCHAR)] = TEXT('\0');
     return tstring(szDeviceString);
 }
@@ -112,14 +102,17 @@ DWORD _NetKVMQueryDeviceDWORD(HDEVINFO hDeviceSet, PSP_DEVINFO_DATA DeviceInfoDa
     if(!SetupDiGetDeviceRegistryProperty(hDeviceSet, DeviceInfoData, dwPropertyID,
         &dwDataType, (PBYTE)&dwDeviceDword, sizeof(dwDeviceDword), NULL))
     {
-        return 0;
+        DWORD dwErr = GetLastError();
+        if(ERROR_INVALID_DATA == dwErr)
+        {
+            return 0;
+        }
+        if(REG_DWORD != dwDataType)
+        {
+            NETCO_DEBUG_PRINT(TEXT("SetupDiGetDeviceRegistryProperty(DWORD) returned incorrect data type ") << REG_DWORD);
+            return 0;
+        }
     }
-    if (REG_DWORD != dwDataType)
-    {
-        NETCO_DEBUG_PRINT(TEXT("SetupDiGetDeviceRegistryProperty(DWORD) returned incorrect data type ") << REG_DWORD);
-        return 0;
-    }
-#pragma warning(suppress: 6102)
     return dwDeviceDword;
 }
 
@@ -462,10 +455,8 @@ DWORD WINAPI _NetKVMShowDevicesCmdHandler(__in   PWCHAR  /*pwszMachine*/,
                                           __in   DWORD   /*dwArgCount*/,
                                           __in   DWORD   /*dwFlags*/,
                                           __in   PVOID   /*pvData*/,
-                                          __out  BOOL*   pbDone)
+                                          __out  BOOL*   /*pbDone*/)
 {
-    *pbDone = FALSE; /* Just to make static analyzer happy */
-
     try
     {
         NETCO_DEBUG_PRINT(TEXT("_NetKVMShowDevicesCmdHandler called"));
@@ -513,10 +504,8 @@ DWORD WINAPI _NetKVMShowParamInfoCmdHandler (__in   PWCHAR  /*pwszMachine*/,
                                              __in   DWORD   dwArgCount,
                                              __in   DWORD   /*dwFlags*/,
                                              __in   PVOID   /*pvData*/,
-                                             __out  BOOL*   pbDone)
+                                             __out  BOOL*   /*pbDone*/)
 {
-    *pbDone = FALSE; /* Just to make static analyzer happy */
-
     try
     {
         NETCO_DEBUG_PRINT(TEXT("_NetKVMShowParamInfoCmdHandler called"));
@@ -621,7 +610,6 @@ DWORD WINAPI _NetKVMShowParamInfoCmdHandler (__in   PWCHAR  /*pwszMachine*/,
                     return ERROR_INVALID_PARAMETER;
                 }
             }
-            __fallthrough;
         default:
             NETCO_DEBUG_PRINT(TEXT("PreprocessCommand returned: ") << dwPreprocessResult);
             return dwPreprocessResult;
@@ -662,10 +650,8 @@ DWORD WINAPI _NetKVMGetParamCmdHandler (__in   PWCHAR  /*pwszMachine*/,
                                         __in   DWORD   dwArgCount,
                                         __in   DWORD   /*dwFlags*/,
                                         __in   PVOID   /*pvData*/,
-                                        __out  BOOL*   pbDone)
+                                        __out  BOOL*   /*pbDone*/)
 {
-    *pbDone = FALSE; /* Just to make static analyzer happy */
-
     try
     {
         NETCO_DEBUG_PRINT(TEXT("_NetKVMGetParamCmdHandler called"));
@@ -703,7 +689,6 @@ DWORD WINAPI _NetKVMGetParamCmdHandler (__in   PWCHAR  /*pwszMachine*/,
                     return ERROR_INVALID_PARAMETER;
                 }
             }
-            __fallthrough;
         default:
             NETCO_DEBUG_PRINT(TEXT("PreprocessCommand returned: ") << dwPreprocessResult);
             return dwPreprocessResult;
@@ -745,10 +730,8 @@ DWORD WINAPI _NetKVMSetParamCmdHandler (__in   PWCHAR  /*pwszMachine*/,
                                         __in   DWORD   dwArgCount,
                                         __in   DWORD   /*dwFlags*/,
                                         __in   PVOID   /*pvData*/,
-                                        __out  BOOL*   pbDone)
+                                        __out  BOOL*   /*pbDone*/)
 {
-    *pbDone = FALSE; /* Just to make static analyzer happy */
-
     try
     {
         NETCO_DEBUG_PRINT(TEXT("_NetKVMSetParamCmdHandler called"));
@@ -785,7 +768,6 @@ DWORD WINAPI _NetKVMSetParamCmdHandler (__in   PWCHAR  /*pwszMachine*/,
                     return ERROR_INVALID_PARAMETER;
                 }
             }
-            __fallthrough;
         default:
             NETCO_DEBUG_PRINT(TEXT("PreprocessCommand returned: ") << dwPreprocessResult);
             return dwPreprocessResult;
@@ -824,10 +806,8 @@ DWORD WINAPI _NetKVMShowParamsCmdHandler(__in   PWCHAR  /*pwszMachine*/,
                                          __in   DWORD   dwArgCount,
                                          __in   DWORD   /*dwFlags*/,
                                          __in   PVOID   /*pvData*/,
-                                         __out  BOOL*   pbDone)
+                                         __out  BOOL*   /*pbDone*/)
 {
-    *pbDone = FALSE; /* Just to make static analyzer happy */
-
     try
     {
         NETCO_DEBUG_PRINT(TEXT("_NetKVMShowParamsCmdHandler called"));
@@ -863,7 +843,6 @@ DWORD WINAPI _NetKVMShowParamsCmdHandler(__in   PWCHAR  /*pwszMachine*/,
                     return ERROR_INVALID_PARAMETER;
                 }
             }
-            __fallthrough;
         default:
             NETCO_DEBUG_PRINT(TEXT("PreprocessCommand returned: ") << dwPreprocessResult);
             return dwPreprocessResult;
@@ -903,10 +882,8 @@ DWORD WINAPI _NetKVMRestartDeviceCmdHandler(__in   PWCHAR  /*pwszMachine*/,
                                             __in   DWORD   dwArgCount,
                                             __in   DWORD   /*dwFlags*/,
                                             __in   PVOID   /*pvData*/,
-                                            __out  BOOL*   pbDone)
+                                            __out  BOOL*   /*pbDone*/)
 {
-    *pbDone = FALSE; /* Just to make static analyzer happy */
-
     try
     {
         NETCO_DEBUG_PRINT(TEXT("_NetKVMRestartDeviceCmdHandler called"));
@@ -940,7 +917,6 @@ DWORD WINAPI _NetKVMRestartDeviceCmdHandler(__in   PWCHAR  /*pwszMachine*/,
                         break;
                     default:
                         PrintMessageFromModule(g_hinstThisDLL, IDS_FAIL);
-                        break;
                     }
                     tcout << endl;
                     return dwError;
@@ -950,7 +926,6 @@ DWORD WINAPI _NetKVMRestartDeviceCmdHandler(__in   PWCHAR  /*pwszMachine*/,
                     return ERROR_INVALID_PARAMETER;
                 }
             }
-            __fallthrough;
         default:
             NETCO_DEBUG_PRINT(TEXT("PreprocessCommand returned: ") << dwPreprocessResult);
             return dwPreprocessResult;

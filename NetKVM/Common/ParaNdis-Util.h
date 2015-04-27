@@ -214,16 +214,16 @@ public:
     {
         CLockedContext<TAccessStrategy> LockedContext(*this);
         InsertHeadList(&m_List, Entry->GetListEntry());
-        CounterIncrement();
-        return GetCount();
+        TCountingStrategy::CounterIncrement();
+        return TCountingStrategy::GetCount();
     }
 
     ULONG PushBack(TEntryType *Entry)
     {
         CLockedContext<TAccessStrategy> LockedContext(*this);
         InsertTailList(&m_List, Entry->GetListEntry());
-        CounterIncrement();
-        return GetCount();
+        TCountingStrategy::CounterIncrement();
+        return TCountingStrategy::GetCount();
     }
 
     void Remove(TEntryType *Entry)
@@ -277,14 +277,14 @@ private:
 
     TEntryType *Pop_LockLess()
     {
-        CounterDecrement();
+        TCountingStrategy::CounterDecrement();
         return TEntryType::GetByListEntry(RemoveHeadList(&m_List));
     }
 
     void Remove_LockLess(PLIST_ENTRY Entry)
     {
         RemoveEntryList(Entry);
-        CounterDecrement();
+        TCountingStrategy::CounterDecrement();
     }
 
     LIST_ENTRY m_List;
@@ -352,7 +352,7 @@ bool __inline ParaNdis_IsPassive()
 #define RW_LOCK_62
 #elif NDIS_SUPPORT_NDIS6
 #define RW_LOCK_60
-#elif
+#else
 #error  Read/Write lock not supported by NDIS before 6.0
 #endif
 

@@ -1,5 +1,5 @@
 /**********************************************************************
- * Copyright (c) 2008-2015 Red Hat, Inc.
+ * Copyright (c) 2008  Red Hat, Inc.
  *
  * File: NetKVMDumpParser.cpp
  *
@@ -13,7 +13,6 @@
 #include "stdafx.h"
 #include "NetKVMDumpParser.h"
 #include "..\..\Common\DebugData.h"
-#include <sal.h>
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -818,7 +817,6 @@ CString tDumpParser::GetProperty(eSystemProperty Prop)
                     s.Format("%s (Up time %d:%d:%d:%d)", buffer, days, hours, min, sec);
                 }
             }
-            break;
         default:
             break;
     }

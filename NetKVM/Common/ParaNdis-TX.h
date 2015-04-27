@@ -39,7 +39,8 @@ public:
     bool IsSendDone();
 
     UCHAR ProtocolID()
-    { return reinterpret_cast<UCHAR>(NET_BUFFER_LIST_INFO(m_NBL, NetBufferListProtocolId)); }
+    { return static_cast<UCHAR>(
+        reinterpret_cast<ULONG_PTR>(NET_BUFFER_LIST_INFO(m_NBL, NetBufferListProtocolId))); }
     bool MatchCancelID(PVOID ID)
     { return NDIS_GET_NET_BUFFER_LIST_CANCEL_ID(m_NBL) == ID; }
     ULONG MSS()
@@ -138,7 +139,6 @@ public:
     bool ScheduleBuildSGListForTx();
 
     void MappingDone(PSCATTER_GATHER_LIST SGL);
-    void ReleaseResources();
 
     CNBL *GetParentNBL() const
     { return m_ParentNBL; }
@@ -229,11 +229,6 @@ public:
 
     //TODO: Needs review
     bool DoPendingTasks(bool IsInterrupt);
-
-    bool QueueHasPacketInHW()
-    {
-        return m_VirtQueue.HasPacketsInHW();
-    }
 
 private:
 

@@ -1,5 +1,5 @@
 /**********************************************************************
- * Copyright (c) 2008-2015 Red Hat, Inc.
+ * Copyright (c) 2008  Red Hat, Inc.
  *
  * File: ParaNdis-Common.c
  *
@@ -93,8 +93,13 @@ static const tConfigurationEntries defaultConfiguration =
     { "ConnectRate",    100,10,10000 },
     { "DoLog",          1,  0,  1 },
     { "DebugLevel",     2,  0,  8 },
-    { "TxCapacity",     1024,   16, 1024 },
-    { "RxCapacity",     256, 32, 1024 },
+#if PARANDIS_SUPPORT_RSC
+    { "TxCapacity",     1024, 16, 1024 },
+    { "RxCapacity",     1024, 32, 1024 },
+#else
+    { "TxCapacity",     1024, 16, 8192 },
+    { "RxCapacity",     8192, 32, 8192 },
+#endif
     { "LogStatistics",  0, 0, 10000},
     { "Offload.TxChecksum", 0, 0, 31},
     { "Offload.TxLSO",  0, 0, 2},
@@ -685,8 +690,15 @@ NDIS_STATUS ParaNdis_InitializeContext(
         }
 
         InitializeMAC(pContext, CurrentMAC);
+        // On 2012, we are posting large buffer (64k + header) size. MRG_RXBUF
+        // is not useful here. We might consider to turning it back on. If we
+        // start to post smaller 4k buffer in the future, we will turn it back
+        // on.
+        pContext->bUseMergedBuffers = false;
+// #if PARANDIS_SUPPORT_RSC
+//         pContext->bUseMergedBuffers = AckFeature(pContext, VIRTIO_NET_F_MRG_RXBUF);
+// #endif
 
-        pContext->bUseMergedBuffers = AckFeature(pContext, VIRTIO_NET_F_MRG_RXBUF);
         pContext->nVirtioHeaderSize = (pContext->bUseMergedBuffers) ? sizeof(virtio_net_hdr_ext) : sizeof(virtio_net_hdr_basic);
         pContext->bDoPublishIndices = AckFeature(pContext, VIRTIO_RING_F_EVENT_IDX);
     }
@@ -741,6 +753,8 @@ NDIS_STATUS ParaNdis_InitializeContext(
 
     pContext->bHasHardwareFilters = AckFeature(pContext, VIRTIO_NET_F_CTRL_RX_EXTRA);
 
+    InterlockedExchange(&pContext->ReuseBufferRegular, TRUE);
+
     VirtIODeviceWriteGuestFeatures(pContext->IODevice, pContext->u32GuestFeatures);
     NdisInitializeEvent(&pContext->ResetEvent);
     DEBUG_EXIT_STATUS(0, status);
@@ -749,12 +763,7 @@ NDIS_STATUS ParaNdis_InitializeContext(
 
 void ParaNdis_FreeRxBufferDescriptor(PARANDIS_ADAPTER *pContext, pRxNetDescriptor p)
 {
-    ULONG i;
-    for(i = 0; i < p->PagesAllocated; i++)
-    {
-        ParaNdis_FreePhysicalMemory(pContext, &p->PhysicalPages[i]);
-    }
-
+    UNREFERENCED_PARAMETER(pContext);
     if(p->BufferSGArray) NdisFreeMemory(p->BufferSGArray, 0, 0);
     if(p->PhysicalPages) NdisFreeMemory(p->PhysicalPages, 0, 0);
     NdisFreeMemory(p, 0, 0);
@@ -1119,7 +1128,7 @@ NDIS_STATUS ParaNdis_FinishInitialization(PARANDIS_ADAPTER *pContext)
     if (status == NDIS_STATUS_SUCCESS && pContext->bUsingMSIX)
     {
         status = ParaNdis_ConfigureMSIXVectors(pContext);
-        DPrintf(0, ("[%s] ParaNdis_VirtIONetInit passed, status = %d\n", __FUNCTION__, status));
+        DPrintf(0, ("[%s] ParaNdis_ConfigureMSIXVectors passed, status = %d\n", __FUNCTION__, status));
     }
 
     if (status == NDIS_STATUS_SUCCESS)
@@ -1174,13 +1183,13 @@ static void VirtIONetRelease(PARANDIS_ADAPTER *pContext)
 
         while (NULL != (pBufferDescriptor = ReceiveQueueGetBuffer(pContext->ReceiveQueues + i)))
         {
-            pBufferDescriptor->Queue->ReuseReceiveBuffer(pBufferDescriptor);
+            pBufferDescriptor->Queue->ReuseReceiveBuffer(FALSE, pBufferDescriptor);
         }
     }
 
     do
     {
-        b = pContext->m_rxPacketsOutsideRing != 0;
+        b = pContext->m_packetPending != 0;
 
         if (b)
         {
@@ -1241,6 +1250,7 @@ Parameters:
 ***********************************************************/
 VOID ParaNdis_CleanupContext(PARANDIS_ADAPTER *pContext)
 {
+    pContext->SendReceiveState = srsHalting;
     /* disable any interrupt generation */
     if (pContext->IODevice->addr)
     {
@@ -1279,10 +1289,6 @@ VOID ParaNdis_CleanupContext(PARANDIS_ADAPTER *pContext)
     }
 
     pContext->m_PauseLock.~CNdisRWLock();
-    if (pContext->m_CompletionLockCreated)
-    {
-        NdisFreeSpinLock(&pContext->m_CompletionLock);
-    }
 
 #if PARANDIS_SUPPORT_RSS
     if (pContext->bRSSInitialized)
@@ -1480,22 +1486,76 @@ VOID ParaNdis_ReceiveQueueAddBuffer(PPARANDIS_RECEIVE_QUEUE pQueue, pRxNetDescri
 
 VOID ParaNdis_TestPausing(PARANDIS_ADAPTER *pContext)
 {
-    ONPAUSECOMPLETEPROC callback = nullptr;
+    BOOLEAN bPendingWaitOver = FALSE;
+    tSendReceiveState state = srsDisabled;
 
-    if (pContext->m_rxPacketsOutsideRing == 0)
+    if (pContext->m_packetPending == 0)
     {
-        CNdisPassiveWriteAutoLock tLock(pContext->m_PauseLock);
-
-        if (pContext->m_rxPacketsOutsideRing == 0 && (pContext->ReceiveState == srsPausing || pContext->ReceivePauseCompletionProc))
         {
-            callback = pContext->ReceivePauseCompletionProc;
-            pContext->ReceiveState = srsDisabled;
-            pContext->ReceivePauseCompletionProc = NULL;
-            ParaNdis_DebugHistory(pContext, hopInternalReceivePause, NULL, 0, 0, 0);
+            CNdisPassiveReadAutoLock tLock(pContext->m_PauseLock);
+
+            if (pContext->m_packetPending == 0 && SRS_IN_TRANSITION_TO_DISABLE(pContext->SendReceiveState))
+            {
+                bPendingWaitOver = TRUE;
+                DPrintf(0, ("[%s] In transition, state = 0x%x\n", __FUNCTION__, pContext->SendReceiveState));
+            }
+        }
+        if (bPendingWaitOver)
+        {
+            bPendingWaitOver = FALSE;
+            {
+                CNdisPassiveWriteAutoLock tLock(pContext->m_PauseLock);
+                if (pContext->m_packetPending == 0 && SRS_IN_TRANSITION_TO_DISABLE(pContext->SendReceiveState))
+                {
+                    DPrintf(0, ("[%s] Setting state to disabled\n", __FUNCTION__));
+                    state = pContext->SendReceiveState;
+                    pContext->SendReceiveState = srsDisabled;
+                    bPendingWaitOver = TRUE;
+                }
+            }
+
+            if (bPendingWaitOver)
+            {
+                DPrintf(0, ("[%s] Pending packet exhausted, state = 0x%x\n", __FUNCTION__, state));
+
+                ParaNdis_DebugHistory(pContext, hopInternalReceivePause, NULL, 0, 0, 0);
+                switch (state)
+                {
+                case srsPausing:
+                    DPrintf(0, ("[%s] Pause complete\n", __FUNCTION__));
+                    NdisMPauseComplete(pContext->MiniportHandle);
+                    break;
+                case srcResetting:
+                    DPrintf(0, ("[%s] Halt complete, setting the event\n", __FUNCTION__));
+                    NdisSetEvent(&pContext->ResetEvent);
+                    break;
+                default:
+                    DPrintf(0, ("[%s] Do nothing\n", __FUNCTION__));
+                    break;
+                }
+            }
         }
     }
+}
 
-    if (callback) callback(pContext);
+VOID ParaNdis_DecreasePending(
+    PARANDIS_ADAPTER *pContext,
+    PNET_BUFFER_LIST NBL,
+    LPCSTR)
+{
+
+    while (NBL)
+    {
+        PNET_BUFFER NB = NET_BUFFER_LIST_FIRST_NB(NBL);
+
+        while (NB) {
+            pContext->m_packetPending.Release();
+            NB = NET_BUFFER_NEXT_NB(NB);
+        }
+        NBL = NET_BUFFER_LIST_NEXT_NBL(NBL);
+    }
+
+    ParaNdis_TestPausing(pContext);
 }
 
 static __inline
@@ -1571,7 +1631,7 @@ static BOOLEAN ProcessReceiveQueue(PARANDIS_ADAPTER *pContext,
             PNET_PACKET_INFO pPacketInfo = &pBufferDescriptor->PacketInfo;
 
             if( !pContext->bSurprizeRemoved &&
-                pContext->ReceiveState == srsEnabled &&
+                pContext->SendReceiveState == srsEnabled &&
                 pContext->bConnected &&
                 ShallPassPacket(pContext, pPacketInfo))
             {
@@ -1597,13 +1657,13 @@ static BOOLEAN ProcessReceiveQueue(PARANDIS_ADAPTER *pContext,
                 else
                 {
                     UpdateReceiveFailStatistics(pContext, nCoalescedSegmentsCount);
-                    pBufferDescriptor->Queue->ReuseReceiveBuffer(pBufferDescriptor);
+                    pBufferDescriptor->Queue->ReuseReceiveBuffer(pContext->ReuseBufferRegular, pBufferDescriptor);
                 }
             }
             else
             {
                 pContext->extraStatistics.framesFilteredOut++;
-                pBufferDescriptor->Queue->ReuseReceiveBuffer(pBufferDescriptor);
+                pBufferDescriptor->Queue->ReuseReceiveBuffer(pContext->ReuseBufferRegular, pBufferDescriptor);
             }
         }
      }
@@ -1632,13 +1692,7 @@ BOOLEAN RxDPCWorkBody(PARANDIS_ADAPTER *pContext, CPUPathesBundle *pathBundle, U
         {
             CNdisDispatchReadAutoLock tLock(pContext->m_PauseLock);
 
-            /* pathBundle is passed from ParaNdis_DPCWorkBody and may be NULL
-            if case DPC handler is scheduled by RSS to the CPU with
-            associated queues */
-            if (pathBundle != nullptr)
-            {
-                pathBundle->rxPath.ProcessRxRing(CurrCpuReceiveQueue);
-            }
+            pathBundle->rxPath.ProcessRxRing(CurrCpuReceiveQueue);
 
             res |= ProcessReceiveQueue(pContext, &nPacketsToIndicate, PARANDIS_RECEIVE_QUEUE_UNCLASSIFIED,
                 &indicate, &indicateTail, &nIndicate);
@@ -1649,14 +1703,8 @@ BOOLEAN RxDPCWorkBody(PARANDIS_ADAPTER *pContext, CPUPathesBundle *pathBundle, U
                     &indicate, &indicateTail, &nIndicate);
             }
 
-            if (pathBundle != nullptr)
-            {
-                bMoreDataInRing = pathBundle->rxPath.RestartQueue();
-            }
-            else
-            {
-                bMoreDataInRing = FALSE;
-            }
+            bMoreDataInRing = pathBundle->rxPath.RestartQueue();
+            pContext->m_packetPending.AddRef(nIndicate);
         }
 
         if (nIndicate)
@@ -1667,9 +1715,6 @@ BOOLEAN RxDPCWorkBody(PARANDIS_ADAPTER *pContext, CPUPathesBundle *pathBundle, U
                 nIndicate,
                 0);
         }
-
-        ParaNdis_TestPausing(pContext);
-
     } while (bMoreDataInRing);
 
     return res;
@@ -1698,8 +1743,11 @@ bool ParaNdis_DPCWorkBody(PARANDIS_ADAPTER *pContext, ULONG ulMaxPacketsToIndica
             pathBundle = pContext->pPathBundles + procNumber;
         }
     }
-    /* When DPC is scheduled for RSS processing, it may be assigned to CPU that has no
-    correspondent path, so pathBundle may remain null. */
+
+    if (pathBundle == nullptr)
+    {
+        return false;
+    }
 
     if (pContext->bEnableInterruptHandlingDPC)
     {
@@ -1719,7 +1767,7 @@ bool ParaNdis_DPCWorkBody(PARANDIS_ADAPTER *pContext, ULONG ulMaxPacketsToIndica
             pContext->CXPath.ClearInterruptReport();
         }
 
-        if (!stillRequiresProcessing && pathBundle != nullptr)
+        if (!stillRequiresProcessing)
         {
             bDoKick = pathBundle->txPath.DoPendingTasks(true);
             if (pathBundle->txPath.RestartQueue(bDoKick))
@@ -2151,6 +2199,8 @@ VOID ParaNdis_PowerOn(PARANDIS_ADAPTER *pContext)
     ParaNdis_UpdateDeviceFilters(pContext);
     ParaNdis_UpdateMAC(pContext);
 
+    InterlockedExchange(&pContext->ReuseBufferRegular, TRUE);
+    
     for (i = 0; i < pContext->nPathBundles; i++)
     {
         pContext->pPathBundles[i].rxPath.PopulateQueue();
@@ -2180,10 +2230,15 @@ VOID ParaNdis_PowerOff(PARANDIS_ADAPTER *pContext)
 
     // if bFastSuspendInProcess is set by Win8 power-off procedure
     // the ParaNdis_Suspend does fast Rx stop without waiting (=>srsPausing, if there are some RX packets in Ndis)
-    pContext->bFastSuspendInProcess = pContext->bNoPauseOnSuspend && pContext->ReceiveState == srsEnabled;
+    pContext->bFastSuspendInProcess = pContext->bNoPauseOnSuspend && pContext->SendReceiveState == srsEnabled;
     ParaNdis_Suspend(pContext);
 
     ParaNdis_RemoveDriverOKStatus(pContext);
+    
+    if (pContext->bFastSuspendInProcess)
+    {
+        InterlockedExchange(&pContext->ReuseBufferRegular, FALSE);
+    }
     
 #if !NDIS_SUPPORT_NDIS620
     // WLK tests for Windows 2008 require media disconnect indication
@@ -2327,14 +2382,4 @@ tChecksumCheckResult ParaNdis_CheckRxChecksum(
     }
 
     return res;
-}
-
-bool ParaNdis_HasPacketsInHW(PARANDIS_ADAPTER *pContext)
-{
-    for (auto i = 0U; i < pContext->nPathBundles; i++)
-    {
-        if (pContext->pPathBundles[i].txPath.QueueHasPacketInHW())
-            return true;
-    }
-    return false;
 }
