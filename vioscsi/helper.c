@@ -1,5 +1,5 @@
 /**********************************************************************
- * Copyright (c) 2012-2015 Red Hat, Inc.
+ * Copyright (c) 2012  Red Hat, Inc.
  *
  * File: helper.c
  *
@@ -24,64 +24,41 @@
 #endif
 
 BOOLEAN
+SynchronizedSRBRoutine(
+    IN PVOID DeviceExtension,
+    IN PVOID Context
+    )
+{
+    PADAPTER_EXTENSION  adaptExt = (PADAPTER_EXTENSION)DeviceExtension;
+    PSCSI_REQUEST_BLOCK Srb      = (PSCSI_REQUEST_BLOCK) Context;
+    PSRB_EXTENSION      srbExt   = (PSRB_EXTENSION)Srb->SrbExtension;
+    PVOID               va;
+    ULONGLONG           pa;
+
+ENTER_FN();
+    SET_VA_PA();
+    if (virtqueue_add_buf(adaptExt->vq[VIRTIO_SCSI_REQUEST_QUEUE_0],
+                     &srbExt->sg[0],
+                     srbExt->out, srbExt->in,
+                     &srbExt->cmd, va, pa) >= 0){
+        virtqueue_kick(adaptExt->vq[VIRTIO_SCSI_REQUEST_QUEUE_0]);
+        return TRUE;
+    }
+    Srb->SrbStatus = SRB_STATUS_BUSY;
+    StorPortBusy(DeviceExtension, 2);
+    virtqueue_kick(adaptExt->vq[VIRTIO_SCSI_REQUEST_QUEUE_0]);
+EXIT_ERR();
+    return FALSE;
+}
+
+BOOLEAN
 SendSRB(
     IN PVOID DeviceExtension,
     IN PSCSI_REQUEST_BLOCK Srb
     )
 {
-    PADAPTER_EXTENSION  adaptExt = (PADAPTER_EXTENSION)DeviceExtension;
-    PSRB_EXTENSION      srbExt   = (PSRB_EXTENSION)Srb->SrbExtension;
-    PVOID               va = NULL;
-    ULONGLONG           pa = 0;
-    ULONG               QueueNumber = 0;
-    ULONG               OldIrql = 0;
-    ULONG               MessageId = 0;
-    BOOLEAN             kick = FALSE;
-    STOR_LOCK_HANDLE    LockHandle = { 0 };
-    ULONG               status = STOR_STATUS_SUCCESS;
 ENTER_FN();
-    SET_VA_PA();
-    RhelDbgPrint(TRACE_LEVEL_INFORMATION, ("Srb %p issued on %d::%d QueueNumber %d\n",
-                 Srb, srbExt->procNum.Group, srbExt->procNum.Number, QueueNumber));
-
-    if (adaptExt->num_queues > 1) {
-        QueueNumber = adaptExt->cpu_to_vq_map[srbExt->procNum.Number];
-        MessageId = QueueNumber + 1;
-        if (CHECKFLAG(adaptExt->perfFlags, STOR_PERF_OPTIMIZE_FOR_COMPLETION_DURING_STARTIO)) {
-            ProcessQueue(DeviceExtension, MessageId, FALSE);
-        }
-//        status = StorPortAcquireMSISpinLock(DeviceExtension, MessageId, &OldIrql);
-        if (status != STOR_STATUS_SUCCESS) {
-            RhelDbgPrint(TRACE_LEVEL_ERROR, ("%s StorPortAcquireMSISpinLock returned status 0x%x\n", __FUNCTION__, status));
-        }
-    }
-    else {
-        QueueNumber = VIRTIO_SCSI_REQUEST_QUEUE_0;
-        StorPortAcquireSpinLock(DeviceExtension, InterruptLock, NULL, &LockHandle);
-    }
-    if (virtqueue_add_buf(adaptExt->vq[QueueNumber],
-                     &srbExt->sg[0],
-                     srbExt->out, srbExt->in,
-                     &srbExt->cmd, va, pa) >= 0){
-        kick = TRUE;
-    }
-    else {
-        RhelDbgPrint(TRACE_LEVEL_WARNING, ("%s Cant add packet to queue.\n", __FUNCTION__));
-//FIXME
-    }
-    if (adaptExt->num_queues > 1) {
-//        status = StorPortReleaseMSISpinLock(DeviceExtension, MessageId, OldIrql);
-        if (status != STOR_STATUS_SUCCESS) {
-            RhelDbgPrint(TRACE_LEVEL_ERROR, ("%s StorPortReleaseMSISpinLock returned status 0x%x\n", __FUNCTION__, status));
-        }
-    }
-    else {
-        StorPortReleaseSpinLock(DeviceExtension, &LockHandle);
-    }
-    if (kick == TRUE) {
-        virtqueue_kick(adaptExt->vq[QueueNumber]);
-    }
-    return kick;
+    return StorPortSynchronizeAccess(DeviceExtension, SynchronizedSRBRoutine, (PVOID)Srb);
 EXIT_FN();
 }
 
@@ -140,7 +117,7 @@ ENTER_FN();
         return TRUE;
     }
     ASSERT(adaptExt->tmf_infly == FALSE);
-
+    Srb->SrbExtension = srbExt;
     memset((PVOID)cmd, 0, sizeof(VirtIOSCSICmd));
     cmd->sc = Srb;
     cmd->req.tmf.lun[0] = 1;
@@ -176,12 +153,15 @@ ShutDown(
     ULONG index;
     PADAPTER_EXTENSION adaptExt = (PADAPTER_EXTENSION)DeviceExtension;
 ENTER_FN();
-    VirtIODeviceReset(adaptExt->pvdev);
+    VirtIODeviceReset(&adaptExt->vdev);
     StorPortWritePortUshort(DeviceExtension, (PUSHORT)(adaptExt->device_base + VIRTIO_PCI_GUEST_FEATURES), 0);
-    for (index = VIRTIO_SCSI_CONTROL_QUEUE; index < adaptExt->num_queues + VIRTIO_SCSI_REQUEST_QUEUE_0; ++index) {
+    for (index = VIRTIO_SCSI_CONTROL_QUEUE; index < VIRTIO_SCSI_QUEUE_LAST; ++index) {
         if (adaptExt->vq[index]) {
             virtqueue_shutdown(adaptExt->vq[index]);
             VirtIODeviceDeleteQueue(adaptExt->vq[index], NULL);
+            if (adaptExt->dump_mode && adaptExt->original_queue_num[index] != 0) {
+                 StorPortWritePortUshort(DeviceExtension, (PUSHORT)(adaptExt->device_base + VIRTIO_PCI_QUEUE_NUM), adaptExt->original_queue_num[2]);
+            }
             adaptExt->vq[index] = NULL;
         }
     }
@@ -198,25 +178,25 @@ ENTER_FN();
 
     adaptExt->features = StorPortReadPortUlong(DeviceExtension, (PULONG)(adaptExt->device_base + VIRTIO_PCI_HOST_FEATURES));
 
-    VirtIODeviceGet( adaptExt->pvdev, FIELD_OFFSET(VirtIOSCSIConfig, seg_max),
+    VirtIODeviceGet( &adaptExt->vdev, FIELD_OFFSET(VirtIOSCSIConfig, seg_max),
                       &adaptExt->scsi_config.seg_max, sizeof(adaptExt->scsi_config.seg_max));
-    VirtIODeviceGet( adaptExt->pvdev, FIELD_OFFSET(VirtIOSCSIConfig, num_queues),
+    VirtIODeviceGet( &adaptExt->vdev, FIELD_OFFSET(VirtIOSCSIConfig, num_queues),
                       &adaptExt->scsi_config.num_queues, sizeof(adaptExt->scsi_config.num_queues));
-    VirtIODeviceGet( adaptExt->pvdev, FIELD_OFFSET(VirtIOSCSIConfig, max_sectors),
+    VirtIODeviceGet( &adaptExt->vdev, FIELD_OFFSET(VirtIOSCSIConfig, max_sectors),
                       &adaptExt->scsi_config.max_sectors, sizeof(adaptExt->scsi_config.max_sectors));
-    VirtIODeviceGet( adaptExt->pvdev, FIELD_OFFSET(VirtIOSCSIConfig, cmd_per_lun),
+    VirtIODeviceGet( &adaptExt->vdev, FIELD_OFFSET(VirtIOSCSIConfig, cmd_per_lun),
                       &adaptExt->scsi_config.cmd_per_lun, sizeof(adaptExt->scsi_config.cmd_per_lun));
-    VirtIODeviceGet( adaptExt->pvdev, FIELD_OFFSET(VirtIOSCSIConfig, event_info_size),
+    VirtIODeviceGet( &adaptExt->vdev, FIELD_OFFSET(VirtIOSCSIConfig, event_info_size),
                       &adaptExt->scsi_config.event_info_size, sizeof(adaptExt->scsi_config.event_info_size));
-    VirtIODeviceGet( adaptExt->pvdev, FIELD_OFFSET(VirtIOSCSIConfig, sense_size),
+    VirtIODeviceGet( &adaptExt->vdev, FIELD_OFFSET(VirtIOSCSIConfig, sense_size),
                       &adaptExt->scsi_config.sense_size, sizeof(adaptExt->scsi_config.sense_size));
-    VirtIODeviceGet( adaptExt->pvdev, FIELD_OFFSET(VirtIOSCSIConfig, cdb_size),
+    VirtIODeviceGet( &adaptExt->vdev, FIELD_OFFSET(VirtIOSCSIConfig, cdb_size),
                       &adaptExt->scsi_config.cdb_size, sizeof(adaptExt->scsi_config.cdb_size));
-    VirtIODeviceGet( adaptExt->pvdev, FIELD_OFFSET(VirtIOSCSIConfig, max_channel),
+    VirtIODeviceGet( &adaptExt->vdev, FIELD_OFFSET(VirtIOSCSIConfig, max_channel),
                       &adaptExt->scsi_config.max_channel, sizeof(adaptExt->scsi_config.max_channel));
-    VirtIODeviceGet( adaptExt->pvdev, FIELD_OFFSET(VirtIOSCSIConfig, max_target),
+    VirtIODeviceGet( &adaptExt->vdev, FIELD_OFFSET(VirtIOSCSIConfig, max_target),
                       &adaptExt->scsi_config.max_target, sizeof(adaptExt->scsi_config.max_target));
-    VirtIODeviceGet( adaptExt->pvdev, FIELD_OFFSET(VirtIOSCSIConfig, max_lun),
+    VirtIODeviceGet( &adaptExt->vdev, FIELD_OFFSET(VirtIOSCSIConfig, max_lun),
                       &adaptExt->scsi_config.max_lun, sizeof(adaptExt->scsi_config.max_lun));
 
 EXIT_FN();
@@ -268,8 +248,7 @@ ENTER_FN();
         return FALSE;
     }
 
-    adaptExt->pvdev = &adaptExt->vdev;
-    VirtIODeviceInitialize(adaptExt->pvdev, adaptExt->device_base, sizeof(VirtIODevice));
+    VirtIODeviceInitialize(&adaptExt->vdev, adaptExt->device_base, sizeof(adaptExt->vdev));
 
 EXIT_FN();
     return TRUE;
@@ -302,7 +281,7 @@ EXIT_ERR();
 BOOLEAN
 KickEvent(
     IN PVOID DeviceExtension,
-    IN PVirtIOSCSIEventNode EventNode 
+    IN PVirtIOSCSIEventNode EventNode
     )
 {
     PADAPTER_EXTENSION adaptExt;
