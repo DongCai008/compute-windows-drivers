@@ -1,5 +1,5 @@
 /**********************************************************************
- * Copyright (c) 2012-2015 Red Hat, Inc.
+ * Copyright (c) 2012  Red Hat, Inc.
  *
  * File: helper.h
  *
@@ -67,7 +67,7 @@ LogError(
 BOOLEAN
 KickEvent(
     IN PVOID DeviceExtension,
-    IN PVirtIOSCSIEventNode event 
+    IN PVirtIOSCSIEventNode event
     );
 
 BOOLEAN
@@ -75,21 +75,5 @@ SynchronizedKickEventRoutine(
     IN PVOID DeviceExtension,
     IN PVOID Context
     );
-
-VOID
-VioScsiCompleteDpcRoutine(
-    IN PSTOR_DPC  Dpc,
-    IN PVOID Context,
-    IN PVOID SystemArgument1,
-    IN PVOID SystemArgument2
-);
-
-VOID
-FORCEINLINE
-ProcessQueue(
-    IN PVOID DeviceExtension,
-    IN ULONG MessageID,
-    IN BOOLEAN dpc
-    );
-
-#endif ___HELPER_H___
+    
+#endif // ___HELPER_H___

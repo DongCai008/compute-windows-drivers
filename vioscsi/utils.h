@@ -1,5 +1,5 @@
 /**********************************************************************
- * Copyright (c) 2012-2015 Red Hat, Inc.
+ * Copyright (c) 2012  Red Hat, Inc.
  *
  * File: utils.h
  *
@@ -18,49 +18,31 @@
 #include <storport.h>
 #include <stdarg.h>
 #include "kdebugprint.h"
+#if defined(EVENT_TRACING)
 #include "evntrace.h"
+#endif
 
 #define CHECKBIT(value, nbit) (((value) & (1 << (nbit))) != 0)
-#define CHECKFLAG(value, flag) (!!(value & (flag)))
-#define SETFLAG(value, flag) (value |= (flag))
 
-#if 0
+#if 1
 #define ENTER_FN() RhelDbgPrint(TRACE_LEVEL_VERBOSE, (("--> %s.\n"),__FUNCTION__))
 #define EXIT_FN()  RhelDbgPrint(TRACE_LEVEL_VERBOSE, (("<-- %s.\n"),__FUNCTION__))
-#define EXIT_ERR() RhelDbgPrint(TRACE_LEVEL_ERROR, (("<--> %s (%d).\n"), __FUNCTION__, __LINE__))
-#define CHECK_CPU(Srb) { \
-    PROCESSOR_NUMBER    ProcNumber; \
-    ULONG               processor = KeGetCurrentProcessorNumberEx(&ProcNumber); \
-    PSRB_EXTENSION srbExt  = (PSRB_EXTENSION)Srb->SrbExtension; \
-    if (ProcNumber.Group != srbExt->procNum.Group || \
-        ProcNumber.Number != srbExt->procNum.Number) { \
-           RhelDbgPrint(TRACE_LEVEL_ERROR, ("%s Srb %p issued on %d::%d currentn %d::%d\n", \
-                   __FUNCTION__, Srb, srbExt->procNum.Group, srbExt->procNum.Number, ProcNumber.Group, ProcNumber.Number)); \
-    } \
-}while (0);
-
+#define EXIT_ERR() RhelDbgPrint(TRACE_LEVEL_VERBOSE, (("<--> %s (%d).\n"), __FUNCTION__, __LINE__))
 #else
 #define ENTER_FN()
 #define EXIT_FN()
 #define EXIT_ERR()
-#define CHECK_CPU(Srb)
 #endif
 
 void InitializeDebugPrints(IN PDRIVER_OBJECT  DriverObject, IN PUNICODE_STRING RegistryPath);
 
 extern int nViostorDebugLevel;
 
-#if DBG
-int
-_cdecl
-_vsnprintf(
-    char *buf,
-    size_t size,
-    const char *fmt,
-    va_list args
-    );
-#define vsnprintf _vsnprintf
+#ifdef DBG
+#define ENABLE_TRACE 1
+#endif
 
+#ifdef ENABLE_TRACE
 #define RhelDbgPrint(level, line) \
     if ((!bDebugPrint) || level > nViostorDebugLevel) {} \
     else VirtioDebugPrintProc line
@@ -89,5 +71,5 @@ char *DbgGetScsiOpStr(PSCSI_REQUEST_BLOCK Srb);
 #endif // TRACE_LEVEL_INFORMATION
 
 
-#endif ___UTILS_H___
+#endif // ___UTILS_H___
 

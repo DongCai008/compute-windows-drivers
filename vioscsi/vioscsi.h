@@ -1,5 +1,5 @@
 /**********************************************************************
- * Copyright (c) 2012-2015  Red Hat, Inc.
+ * Copyright (c) 2012  Red Hat, Inc.
  *
  * File: vioscsi.h
  *
@@ -36,7 +36,6 @@ typedef struct VirtIOBufferDescriptor VIO_SG, *PVIO_SG;
 
 #define SECTOR_SIZE             512
 #define IO_PORT_LENGTH          0x40
-#define MAX_CPU                 256
 
 /* Feature Bits */
 #define VIRTIO_SCSI_F_INOUT                    0
@@ -95,7 +94,7 @@ typedef struct VirtIOBufferDescriptor VIO_SG, *PVIO_SG;
 #define VIRTIO_SCSI_CONTROL_QUEUE              0
 #define VIRTIO_SCSI_EVENTS_QUEUE               1
 #define VIRTIO_SCSI_REQUEST_QUEUE_0            2
-#define VIRTIO_SCSI_QUEUE_LAST                 VIRTIO_SCSI_REQUEST_QUEUE_0 + MAX_CPU
+#define VIRTIO_SCSI_QUEUE_LAST                 3
 
 /* SCSI command request, followed by data-out */
 #pragma pack(1)
@@ -203,28 +202,25 @@ typedef struct {
 } VirtIOSCSIEventNode, * PVirtIOSCSIEventNode;
 #pragma pack()
 
-typedef struct vring_desc_alias
+typedef struct
 {
     union
     {
         ULONGLONG data[2];
         UCHAR chars[SIZE_OF_SINGLE_INDIRECT_DESC];
     }u;
-};
+} vring_desc_alias;
 
 #pragma pack(1)
 typedef struct _SRB_EXTENSION {
-    LIST_ENTRY            list_entry;
-    PSCSI_REQUEST_BLOCK   Srb;
     ULONG                 out;
     ULONG                 in;
     ULONG                 Xfer;
     VirtIOSCSICmd         cmd;
     VIO_SG                sg[128];
 #if (INDIRECT_SUPPORTED == 1)
-    struct vring_desc_alias     desc[VIRTIO_MAX_SG];
+    vring_desc_alias     desc[VIRTIO_MAX_SG];
 #endif
-    PROCESSOR_NUMBER      procNum;
 }SRB_EXTENSION, * PSRB_EXTENSION;
 #pragma pack()
 
@@ -237,8 +233,6 @@ typedef struct {
 
 typedef struct _ADAPTER_EXTENSION {
     VirtIODevice          vdev;
-    VirtIODevice*         pvdev;
-
     PVOID                 uncachedExtensionVa;
     ULONG                 allocationSize;
 
@@ -259,14 +253,9 @@ typedef struct _ADAPTER_EXTENSION {
     TMF_COMMAND           tmf_cmd;
     BOOLEAN               tmf_infly;
 
+    USHORT                original_queue_num[4];  // last element used as pad.
+
     PVirtIOSCSIEventNode  events;
-
-    ULONG                 num_queues;
-    UCHAR                 cpu_to_vq_map[MAX_CPU];
-    ULONG                 perfFlags;
-
-    BOOLEAN               dpc_ok;
-    PSTOR_DPC             dpc;
 }ADAPTER_EXTENSION, * PADAPTER_EXTENSION;
 
 #if (MSI_SUPPORTED == 1)
@@ -301,4 +290,4 @@ typedef struct {
 #define SPC3_SCSI_SENSEQ_MODE_PARAMETERS_CHANGED            0x01
 #define SPC3_SCSI_SENSEQ_CAPACITY_DATA_HAS_CHANGED          0x09
 
-#endif ___VIOSCSI__H__
+#endif // ___VIOSCSI__H__
