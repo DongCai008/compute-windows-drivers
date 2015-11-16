@@ -1,3 +1,4 @@
+#pragma once
 #include "ParaNdis-VirtQueue.h"
 #include "ndis56common.h"
 #include "ParaNdis-AbstractPath.h"
@@ -9,7 +10,9 @@ public:
 
     bool Create(PPARANDIS_ADAPTER Context, UINT DeviceQueueIndex);
 
-    BOOLEAN CParaNdisCX::SendControlMessage(
+    virtual NDIS_STATUS SetupMessageIndex(u16 queueCardinal);
+
+    BOOLEAN SendControlMessage(
         UCHAR cls,
         UCHAR cmd,
         PVOID buffer1,
@@ -22,4 +25,3 @@ public:
 protected:
     tCompletePhysicalAddress m_ControlData;
 };
-

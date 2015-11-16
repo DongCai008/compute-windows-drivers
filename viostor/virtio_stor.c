@@ -341,17 +341,18 @@ VirtIoFindAdapter(
     {
         UCHAR CapOffset;
         PPCI_MSIX_CAPABILITY pMsixCapOffset;
-
+        PPCI_COMMON_HEADER   pPciComHeader;
+        pPciComHeader = (PPCI_COMMON_HEADER)pci_cfg_buf;
         pPciConf = (PPCI_COMMON_CONFIG)pci_cfg_buf;
-        if ( (pPciConf->Status & PCI_STATUS_CAPABILITIES_LIST) == 0)
+        if ( (pPciComHeader->Status & PCI_STATUS_CAPABILITIES_LIST) == 0)
         {
            RhelDbgPrint(TRACE_LEVEL_INFORMATION, ("NO CAPABILITIES_LIST\n"));
         }
         else
         {
-           if ( (pPciConf->HeaderType & (~PCI_MULTIFUNCTION)) == PCI_DEVICE_TYPE )
+           if ( (pPciComHeader->HeaderType & (~PCI_MULTIFUNCTION)) == PCI_DEVICE_TYPE )
            {
-              CapOffset = pPciConf->u.type0.CapabilitiesPtr;
+              CapOffset = pPciComHeader->u.type0.CapabilitiesPtr;
               while (CapOffset != 0)
               {
                  pMsixCapOffset = (PPCI_MSIX_CAPABILITY)(pci_cfg_buf + CapOffset);
@@ -537,7 +538,7 @@ VirtIoHwInitialize(
     }
 
     if (CHECKBIT(adaptExt->features, VIRTIO_BLK_F_SEG_MAX)) {
-        guestFeatures |= (1ul << VIRTIO_BLK_F_WCACHE);
+        guestFeatures |= (1ul << VIRTIO_BLK_F_SEG_MAX);
     }
 
     if (CHECKBIT(adaptExt->features, VIRTIO_BLK_F_BLK_SIZE)) {
@@ -934,15 +935,16 @@ VirtIoBuildIo(
 
     lba = RhelGetLba(DeviceExtension, cdb);
     blocks = (Srb->DataTransferLength + adaptExt->info.blk_size - 1) / adaptExt->info.blk_size;
-    if ((lba + blocks) > adaptExt->lastLBA) {
-        PSENSE_DATA senseBuffer = (PSENSE_DATA)Srb->SenseInfoBuffer;
-        Srb->SrbStatus = SRB_STATUS_ERROR | SRB_STATUS_AUTOSENSE_VALID;
-        Srb->ScsiStatus = SCSISTAT_GOOD;
-        senseBuffer->SenseKey = SCSI_SENSE_ILLEGAL_REQUEST;
-        senseBuffer->AdditionalSenseCode = SCSI_ADSENSE_ILLEGAL_BLOCK;
-        senseBuffer->AdditionalSenseCodeQualifier = 0;
+    if (lba > adaptExt->lastLBA) {
+        RhelDbgPrint(TRACE_LEVEL_ERROR, ("SRB_STATUS_BAD_SRB_BLOCK_LENGTH lba = %llu lastLBA= %llu\n", lba, adaptExt->lastLBA));
+        Srb->SrbStatus = SRB_STATUS_BAD_SRB_BLOCK_LENGTH;
         CompleteSRB(DeviceExtension, Srb);
         return FALSE;
+    }
+    if ((lba + blocks) > adaptExt->lastLBA) {
+        blocks = (ULONG)(adaptExt->lastLBA + 1 - lba);
+        RhelDbgPrint(TRACE_LEVEL_ERROR, ("lba = %llu lastLBA= %llu blocks = %lu\n", lba, adaptExt->lastLBA, blocks));
+        Srb->DataTransferLength = (ULONG)(blocks * adaptExt->info.blk_size);
     }
 
     sgList = StorPortGetScatterGatherList(DeviceExtension, Srb);

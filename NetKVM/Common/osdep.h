@@ -15,13 +15,22 @@
 
 #pragma warning (push)
 #pragma warning (disable:4201)
+#pragma warning (disable:28301)
+#pragma warning (disable:28252)
+#pragma warning (disable:28251)
 #include <ndis.h>
 #pragma warning (pop)
 
-#define u8 unsigned char
-#define u16 unsigned short
-#define u32 unsigned long
-#define u64 ULONGLONG
+#pragma warning (push)
+#pragma warning (disable:6102)
+#include <ntstrsafe.h>
+#pragma warning (pop)
+
+#if NTDDI_VERSION <= NTDDI_VISTA
+#define _Requires_lock_held_(lock)
+#define _Acquires_shared_lock_(lock)
+#define _Acquires_exclusive_lock_(lock)
+#endif
 
 #define mb()   KeMemoryBarrier()
 #define rmb()  KeMemoryBarrier()

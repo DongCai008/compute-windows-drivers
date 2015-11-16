@@ -251,7 +251,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Win8.1 Release|Win32'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
-      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;INDIRECT_SUPPORTED=1;MSI_SUPPORTED=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;INDIRECT_SUPPORTED=1;MSI_SUPPORTED=1;COM_DEBUG=1;EVENT_TRACING=1;_NT_TARGET_MIN=$(_RHEL_RELEASE_VERSION_);ENABLE_WMI;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link>
       <AdditionalDependencies>%(AdditionalDependencies);$(KernelBufferOverflowLib);$(DDK_LIB_PATH)\ntoskrnl.lib;$(DDK_LIB_PATH)\storport.lib;$(DDK_LIB_PATH)\scsiwmi.lib;$(DDK_LIB_PATH)\wdm.lib;</AdditionalDependencies>
@@ -278,7 +278,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Win8.1 Debug|Win32'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
-      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;INDIRECT_SUPPORTED=1;MSI_SUPPORTED=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;INDIRECT_SUPPORTED=1;MSI_SUPPORTED=1;COM_DEBUG=1;EVENT_TRACING=1;_NT_TARGET_MIN=$(_RHEL_RELEASE_VERSION_);ENABLE_WMI;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <Optimization>Disabled</Optimization>
     </ClCompile>
     <Link>
@@ -306,7 +306,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Win8 Release|Win32'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
-      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;INDIRECT_SUPPORTED=1;MSI_SUPPORTED=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;INDIRECT_SUPPORTED=1;MSI_SUPPORTED=1;COM_DEBUG=1;EVENT_TRACING=1;_NT_TARGET_MIN=$(_RHEL_RELEASE_VERSION_);ENABLE_WMI;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link>
       <AdditionalDependencies>%(AdditionalDependencies);$(KernelBufferOverflowLib);$(DDK_LIB_PATH)\ntoskrnl.lib;$(DDK_LIB_PATH)\storport.lib;$(DDK_LIB_PATH)\scsiwmi.lib;$(DDK_LIB_PATH)\wdm.lib;</AdditionalDependencies>
@@ -333,7 +333,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Win7 Release|Win32'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
-      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;INDIRECT_SUPPORTED=1;MSI_SUPPORTED=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;INDIRECT_SUPPORTED=1;MSI_SUPPORTED=1;COM_DEBUG=1;EVENT_TRACING=1;_NT_TARGET_MIN=$(_RHEL_RELEASE_VERSION_);ENABLE_WMI;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link>
       <AdditionalDependencies>%(AdditionalDependencies);$(KernelBufferOverflowLib);$(DDK_LIB_PATH)\ntoskrnl.lib;$(DDK_LIB_PATH)\storport.lib;$(DDK_LIB_PATH)\scsiwmi.lib;$(DDK_LIB_PATH)\wdm.lib;</AdditionalDependencies>
@@ -360,7 +360,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Win8 Debug|Win32'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
-      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;INDIRECT_SUPPORTED=1;MSI_SUPPORTED=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;INDIRECT_SUPPORTED=1;MSI_SUPPORTED=1;COM_DEBUG=1;EVENT_TRACING=1;_NT_TARGET_MIN=$(_RHEL_RELEASE_VERSION_);ENABLE_WMI;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <Optimization>Disabled</Optimization>
       <FavorSizeOrSpeed>Neither</FavorSizeOrSpeed>
     </ClCompile>
@@ -389,7 +389,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Win7 Debug|Win32'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
-      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;INDIRECT_SUPPORTED=1;MSI_SUPPORTED=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_X86_=1;i386=1;STD_CALL;INDIRECT_SUPPORTED=1;MSI_SUPPORTED=1;COM_DEBUG=1;EVENT_TRACING=1;_NT_TARGET_MIN=$(_RHEL_RELEASE_VERSION_);ENABLE_WMI;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <Optimization>Disabled</Optimization>
       <FavorSizeOrSpeed>Neither</FavorSizeOrSpeed>
     </ClCompile>
@@ -448,7 +448,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Win8.1 Release|x64'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
-      <PreprocessorDefinitions>_WIN64;_AMD64_;AMD64;INDIRECT_SUPPORTED=1;MSI_SUPPORTED=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_WIN64;_AMD64_;AMD64;INDIRECT_SUPPORTED=1;MSI_SUPPORTED=1;COM_DEBUG=1;EVENT_TRACING=1;_NT_TARGET_MIN=$(_RHEL_RELEASE_VERSION_);ENABLE_WMI;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link>
       <AdditionalDependencies>%(AdditionalDependencies);$(KernelBufferOverflowLib);$(DDK_LIB_PATH)\ntoskrnl.lib;$(DDK_LIB_PATH)\storport.lib;$(DDK_LIB_PATH)\scsiwmi.lib;$(DDK_LIB_PATH)\wdm.lib;</AdditionalDependencies>
@@ -475,7 +475,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Win8.1 Debug|x64'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
-      <PreprocessorDefinitions>_WIN64;_AMD64_;AMD64;INDIRECT_SUPPORTED=1;MSI_SUPPORTED=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_WIN64;_AMD64_;AMD64;INDIRECT_SUPPORTED=1;MSI_SUPPORTED=1;COM_DEBUG=1;EVENT_TRACING=1;_NT_TARGET_MIN=$(_RHEL_RELEASE_VERSION_);ENABLE_WMI;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <Optimization>Disabled</Optimization>
     </ClCompile>
     <Link>
@@ -503,7 +503,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Win8 Release|x64'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
-      <PreprocessorDefinitions>_WIN64;_AMD64_;AMD64;INDIRECT_SUPPORTED=1;MSI_SUPPORTED=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_WIN64;_AMD64_;AMD64;INDIRECT_SUPPORTED=1;MSI_SUPPORTED=1;COM_DEBUG=1;EVENT_TRACING=1;_NT_TARGET_MIN=$(_RHEL_RELEASE_VERSION_);ENABLE_WMI;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <EnablePREfast>false</EnablePREfast>
     </ClCompile>
     <Link>
@@ -531,7 +531,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Win7 Release|x64'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
-      <PreprocessorDefinitions>_WIN64;_AMD64_;AMD64;INDIRECT_SUPPORTED=1;MSI_SUPPORTED=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_WIN64;_AMD64_;AMD64;INDIRECT_SUPPORTED=1;MSI_SUPPORTED=1;COM_DEBUG=1;EVENT_TRACING=1;_NT_TARGET_MIN=$(_RHEL_RELEASE_VERSION_);ENABLE_WMI;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <EnablePREfast>false</EnablePREfast>
     </ClCompile>
     <Link>
@@ -559,7 +559,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Win8 Debug|x64'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
-      <PreprocessorDefinitions>_WIN64;_AMD64_;AMD64;INDIRECT_SUPPORTED=1;MSI_SUPPORTED=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_WIN64;_AMD64_;AMD64;INDIRECT_SUPPORTED=1;MSI_SUPPORTED=1;COM_DEBUG=1;EVENT_TRACING=1;_NT_TARGET_MIN=$(_RHEL_RELEASE_VERSION_);ENABLE_WMI;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <EnablePREfast>false</EnablePREfast>
       <Optimization>Disabled</Optimization>
       <FavorSizeOrSpeed>Neither</FavorSizeOrSpeed>
@@ -589,7 +589,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Win7 Debug|x64'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
-      <PreprocessorDefinitions>_WIN64;_AMD64_;AMD64;INDIRECT_SUPPORTED=1;MSI_SUPPORTED=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_WIN64;_AMD64_;AMD64;INDIRECT_SUPPORTED=1;MSI_SUPPORTED=1;COM_DEBUG=1;EVENT_TRACING=1;_NT_TARGET_MIN=$(_RHEL_RELEASE_VERSION_);ENABLE_WMI;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <EnablePREfast>false</EnablePREfast>
       <Optimization>Disabled</Optimization>
       <FavorSizeOrSpeed>Neither</FavorSizeOrSpeed>
@@ -641,6 +641,43 @@
     <ClCompile Include="utils.c" />
     <ClCompile Include="vioscsi.c" />
     <ClCompile Include="virtio_pci.c" />
+    <ClCompile Include="wmi.c" />
+  </ItemGroup>
+  <ItemGroup>
+    <Mofcomp Include="perf.mof">
+      <AutoRecover Condition="'$(Configuration)|$(Platform)'=='Win8 Release|Win32'">true</AutoRecover>
+      <AutoRecover Condition="'$(Configuration)|$(Platform)'=='Win7 Release|Win32'">true</AutoRecover>
+      <WmiSyntaxCheck Condition="'$(Configuration)|$(Platform)'=='Win8 Release|Win32'">true</WmiSyntaxCheck>
+      <WmiSyntaxCheck Condition="'$(Configuration)|$(Platform)'=='Win7 Release|Win32'">true</WmiSyntaxCheck>
+      <AutoRecover Condition="'$(Configuration)|$(Platform)'=='Win8.1 Release|Win32'">true</AutoRecover>
+      <WmiSyntaxCheck Condition="'$(Configuration)|$(Platform)'=='Win8.1 Release|Win32'">true</WmiSyntaxCheck>
+      <AutoRecover Condition="'$(Configuration)|$(Platform)'=='Win8.1 Debug|Win32'">true</AutoRecover>
+      <WmiSyntaxCheck Condition="'$(Configuration)|$(Platform)'=='Win8.1 Debug|Win32'">true</WmiSyntaxCheck>
+      <AutoRecover Condition="'$(Configuration)|$(Platform)'=='Win8 Debug|Win32'">true</AutoRecover>
+      <AutoRecover Condition="'$(Configuration)|$(Platform)'=='Win7 Debug|Win32'">true</AutoRecover>
+      <WmiSyntaxCheck Condition="'$(Configuration)|$(Platform)'=='Win8 Debug|Win32'">true</WmiSyntaxCheck>
+      <WmiSyntaxCheck Condition="'$(Configuration)|$(Platform)'=='Win7 Debug|Win32'">true</WmiSyntaxCheck>
+      <AutoRecover Condition="'$(Configuration)|$(Platform)'=='Win8 Release|x64'">true</AutoRecover>
+      <AutoRecover Condition="'$(Configuration)|$(Platform)'=='Win7 Release|x64'">true</AutoRecover>
+      <WmiSyntaxCheck Condition="'$(Configuration)|$(Platform)'=='Win8 Release|x64'">true</WmiSyntaxCheck>
+      <WmiSyntaxCheck Condition="'$(Configuration)|$(Platform)'=='Win7 Release|x64'">true</WmiSyntaxCheck>
+      <AutoRecover Condition="'$(Configuration)|$(Platform)'=='Win8.1 Release|x64'">true</AutoRecover>
+      <WmiSyntaxCheck Condition="'$(Configuration)|$(Platform)'=='Win8.1 Release|x64'">true</WmiSyntaxCheck>
+      <AutoRecover Condition="'$(Configuration)|$(Platform)'=='Win8.1 Debug|x64'">true</AutoRecover>
+      <WmiSyntaxCheck Condition="'$(Configuration)|$(Platform)'=='Win8.1 Debug|x64'">true</WmiSyntaxCheck>
+      <AutoRecover Condition="'$(Configuration)|$(Platform)'=='Win8 Debug|x64'">true</AutoRecover>
+      <AutoRecover Condition="'$(Configuration)|$(Platform)'=='Win7 Debug|x64'">true</AutoRecover>
+      <WmiSyntaxCheck Condition="'$(Configuration)|$(Platform)'=='Win8 Debug|x64'">true</WmiSyntaxCheck>
+      <WmiSyntaxCheck Condition="'$(Configuration)|$(Platform)'=='Win7 Debug|x64'">true</WmiSyntaxCheck>
+    </Mofcomp>
+    <Wmimofck Include=".\$(IntDir)\perf.bmf">
+      <GenerateStructureDefinitionsForMethodParameters>true</GenerateStructureDefinitionsForMethodParameters>
+      <HeaderOutputFile>.\$(IntDir)\wmidata.h</HeaderOutputFile>
+      <VBScriptTestOutputFile>.\$(IntDir)\wmisamp.vbs</VBScriptTestOutputFile>
+      <HexdumpOutputFile>.\$(IntDir)\wmisamp.x</HexdumpOutputFile>
+      <HtmlOutputDirectory>.\$(IntDir)\htm</HtmlOutputDirectory>
+      <HtmlUIOutputDirectory>true</HtmlUIOutputDirectory>
+    </Wmimofck>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

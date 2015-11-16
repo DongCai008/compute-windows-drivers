@@ -1,5 +1,5 @@
 #include "ndis56common.h"
-#include <sal.h>
+#include "kdebugprint.h"
 
 CNBL::CNBL(PNET_BUFFER_LIST NBL, PPARANDIS_ADAPTER Context, CParaNdisTX &ParentTXPath)
     : m_NBL(NBL)
@@ -488,7 +488,7 @@ bool CParaNdisTX::SendMapped(bool IsInterrupt, PNET_BUFFER_LIST &NBLFailNow)
         NBLFailNow = RemoveAllNonWaitingNBLs();
         if (NBLFailNow)
         {
-            DPrintf(0, (__FUNCTION__ " Failing send"));
+            DPrintf(0, ("[%s] Failing send", __FUNCTION__));
         }
     }
     else
@@ -584,15 +584,18 @@ bool CParaNdisTX::DoPendingTasks(bool IsInterrupt)
                     bDoKick = SendMapped(IsInterrupt, pNBLFailNow);
                     pNBLReturnNow = ProcessWaitingList();
                     {
-                        CNdisPassiveWriteAutoLock tLock(m_Context->m_PauseLock);
-
                         NdisDprAcquireSpinLock(&m_Context->m_CompletionLock);
 
-                        if (m_Context->SendState == srsPausing && !ParaNdis_HasPacketsInHW(m_Context))
+                        if (m_Context->SendState == srsPausing)
                         {
-                            CallbackToCall = m_Context->SendPauseCompletionProc;
-                            m_Context->SendPauseCompletionProc = nullptr;
-                            m_Context->SendState = srsDisabled;
+                            CNdisPassiveWriteAutoLock tLock(m_Context->m_PauseLock);
+
+                            if (m_Context->SendState == srsPausing && !ParaNdis_HasPacketsInHW(m_Context))
+                            {
+                                CallbackToCall = m_Context->SendPauseCompletionProc;
+                                m_Context->SendPauseCompletionProc = nullptr;
+                                m_Context->SendState = srsDisabled;
+                            }
                         }
                     }
                  });
@@ -653,19 +656,31 @@ bool CNB::ScheduleBuildSGListForTx()
                                         NDIS_SG_LIST_WRITE_TO_DEVICE, nullptr, 0) == NDIS_STATUS_SUCCESS;
 }
 
-void CNB::PopulateIPLength(IPv4Header *IpHeader, USHORT IpLength) const
+void CNB::PopulateIPLength(IPHeader *IpHeader, USHORT IpLength) const
 {
-    if ((IpHeader->ip_verlen & 0xF0) == 0x40)
+    if ((IpHeader->v4.ip_verlen & 0xF0) == 0x40)
     {
-        if (!IpHeader->ip_length) {
-            IpHeader->ip_length = swap_short(IpLength);
+        if (!IpHeader->v4.ip_length)
+        {
+            IpHeader->v4.ip_length = swap_short(IpLength);
         }
+    }
+    else if ((IpHeader->v6.ip6_ver_tc & 0xF0) == 0x60)
+    {
+        if (!IpHeader->v6.ip6_payload_len)
+        {
+            IpHeader->v6.ip6_payload_len = swap_short(IpLength - IPV6_HEADER_MIN_SIZE);
+        }
+    }
+    else
+    {
+        DPrintf(0, ("[%s] ERROR: Bad version of IP header!\n", __FUNCTION__));
     }
 }
 
-void CNB::SetupLSO(virtio_net_hdr_basic *VirtioHeader, PVOID IpHeader, ULONG EthPayloadLength) const
+void CNB::SetupLSO(virtio_net_hdr *VirtioHeader, PVOID IpHeader, ULONG EthPayloadLength) const
 {
-    PopulateIPLength(reinterpret_cast<IPv4Header*>(IpHeader), static_cast<USHORT>(EthPayloadLength));
+    PopulateIPLength(reinterpret_cast<IPHeader*>(IpHeader), static_cast<USHORT>(EthPayloadLength));
 
     tTcpIpPacketParsingResult packetReview;
     packetReview = ParaNdis_CheckSumVerifyFlat(reinterpret_cast<IPv4Header*>(IpHeader), EthPayloadLength,
@@ -676,7 +691,7 @@ void CNB::SetupLSO(virtio_net_hdr_basic *VirtioHeader, PVOID IpHeader, ULONG Eth
     if (packetReview.xxpCheckSum == ppresPCSOK || packetReview.fixedXxpCS)
     {
         auto IpHeaderOffset = m_Context->Offload.ipHeaderOffset;
-        auto VHeader = static_cast<virtio_net_hdr_basic*>(VirtioHeader);
+        auto VHeader = static_cast<virtio_net_hdr*>(VirtioHeader);
         auto PriorityHdrLen = (m_ParentNBL->TCI() != 0) ? ETH_PRIORITY_HEADER_SIZE : 0;
 
         VHeader->flags = VIRTIO_NET_HDR_F_NEEDS_CSUM;
@@ -705,7 +720,7 @@ USHORT CNB::QueryL4HeaderOffset(PVOID PacketData, ULONG IpHeaderOffset) const
     return Res;
 }
 
-void CNB::SetupCSO(virtio_net_hdr_basic *VirtioHeader, ULONG L4HeaderOffset) const
+void CNB::SetupCSO(virtio_net_hdr *VirtioHeader, ULONG L4HeaderOffset) const
 {
     u16 PriorityHdrLen = m_ParentNBL->TCI() ? ETH_PRIORITY_HEADER_SIZE : 0;
 
@@ -796,7 +811,7 @@ void CNB::BuildPriorityHeader(PETH_HEADER EthHeader, PVLAN_HEADER VlanHeader) co
     }
 }
 
-void CNB::PrepareOffloads(virtio_net_hdr_basic *VirtioHeader, PVOID IpHeader, ULONG EthPayloadLength, ULONG L4HeaderOffset) const
+void CNB::PrepareOffloads(virtio_net_hdr *VirtioHeader, PVOID IpHeader, ULONG EthPayloadLength, ULONG L4HeaderOffset) const
 {
     *VirtioHeader = {};
 
@@ -856,7 +871,7 @@ bool CNB::Copy(PVOID Dst, ULONG Length) const
         PVOID CurrAddr;
 
 #if NDIS_SUPPORT_NDIS620
-        NdisQueryMdl(CurrMDL, &CurrAddr, &CurrLen, LowPagePriority | MdlMappingNoExecute);
+        NdisQueryMdl(CurrMDL, &CurrAddr, &CurrLen, static_cast<MM_PAGE_PRIORITY>(LowPagePriority | MdlMappingNoExecute));
 #else
         NdisQueryMdl(CurrMDL, &CurrAddr, &CurrLen, LowPagePriority);
 #endif

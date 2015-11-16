@@ -1,5 +1,5 @@
 /**********************************************************************
- * Copyright (c) 2012  Red Hat, Inc.
+ * Copyright (c) 2012-2015  Red Hat, Inc.
  *
  * File: vioscsi.h
  *
@@ -15,11 +15,15 @@
 #define ___VIOSCSI_H__
 
 #include <ntddk.h>
+#include <ntddscsi.h>
 #include <storport.h>
+#include <scsiwmi.h>
 
 #include "osdep.h"
 #include "virtio_pci.h"
+#include "virtio_config.h"
 #include "VirtIO.h"
+#include "virtio_ring.h"
 
 typedef struct VirtIOBufferDescriptor VIO_SG, *PVIO_SG;
 
@@ -36,11 +40,17 @@ typedef struct VirtIOBufferDescriptor VIO_SG, *PVIO_SG;
 
 #define SECTOR_SIZE             512
 #define IO_PORT_LENGTH          0x40
+#define MAX_CPU                 256
+
+/* See google3/cloud/vmm/guest/virtio_scsi/virtio_scsi_abi.h for abi
+documentation. */
 
 /* Feature Bits */
-#define VIRTIO_SCSI_F_INOUT                    0
-#define VIRTIO_SCSI_F_HOTPLUG                  1
-#define VIRTIO_SCSI_F_CHANGE                   2
+#define VIRTIO_SCSI_F_INOUT                        0
+#define VIRTIO_SCSI_F_HOTPLUG                      1
+#define VIRTIO_SCSI_F_CHANGE                       2
+#define VIRTIO_SCSI_F_GOOGLE_SNAPSHOT              22
+#define VIRTIO_SCSI_F_GOOGLE_REPORT_DRIVER_VERSION 23
 
 /* Response codes */
 #define VIRTIO_SCSI_S_OK                       0
@@ -61,6 +71,7 @@ typedef struct VirtIOBufferDescriptor VIO_SG, *PVIO_SG;
 #define VIRTIO_SCSI_T_TMF                      0
 #define VIRTIO_SCSI_T_AN_QUERY                 1
 #define VIRTIO_SCSI_T_AN_SUBSCRIBE             2
+#define VIRTIO_SCSI_T_GOOGLE                   0x80000000
 
 /* Valid TMF subtypes.  */
 #define VIRTIO_SCSI_T_TMF_ABORT_TASK           0
@@ -72,12 +83,19 @@ typedef struct VirtIOBufferDescriptor VIO_SG, *PVIO_SG;
 #define VIRTIO_SCSI_T_TMF_QUERY_TASK           6
 #define VIRTIO_SCSI_T_TMF_QUERY_TASK_SET       7
 
+/* Valid Google control queue message subtypes. */
+#define VIRTIO_SCSI_T_GOOGLE_REPORT_DRIVER_VERSION 0
+#define VIRTIO_SCSI_T_GOOGLE_REPORT_SNAPSHOT_READY 1
+
 /* Events.  */
 #define VIRTIO_SCSI_T_EVENTS_MISSED            0x80000000
 #define VIRTIO_SCSI_T_NO_EVENT                 0
 #define VIRTIO_SCSI_T_TRANSPORT_RESET          1
 #define VIRTIO_SCSI_T_ASYNC_NOTIFY             2
 #define VIRTIO_SCSI_T_PARAM_CHANGE             3
+// Google VSS SnapshotRequest events:
+#define VIRTIO_SCSI_T_SNAPSHOT_START           100
+#define VIRTIO_SCSI_T_SNAPSHOT_COMPLETE        101
 
 /* Reasons of transport reset event */
 #define VIRTIO_SCSI_EVT_RESET_HARD             0
@@ -94,7 +112,7 @@ typedef struct VirtIOBufferDescriptor VIO_SG, *PVIO_SG;
 #define VIRTIO_SCSI_CONTROL_QUEUE              0
 #define VIRTIO_SCSI_EVENTS_QUEUE               1
 #define VIRTIO_SCSI_REQUEST_QUEUE_0            2
-#define VIRTIO_SCSI_QUEUE_LAST                 3
+#define VIRTIO_SCSI_QUEUE_LAST                 VIRTIO_SCSI_REQUEST_QUEUE_0 + MAX_CPU
 
 /* SCSI command request, followed by data-out */
 #pragma pack(1)
@@ -153,6 +171,22 @@ typedef struct {
 } VirtIOSCSICtrlANResp, * PVirtIOSCSICtrlANResp;
 #pragma pack()
 
+/* Google control message */
+#pragma pack(1)
+typedef struct {
+    u32 type;
+    u32 subtype;
+    u8 lun[8];
+    u64 data;
+} VirtIOSCSICtrlGoogleReq, *PVirtIOSCSICtrlGoogleReq;
+#pragma pack()
+
+#pragma pack(1)
+typedef struct {
+    u8 response;
+} VirtIOSCSICtrlGoogleResp, *PVirtIOSCSICtrlGoogleResp;
+#pragma pack()
+
 #pragma pack(1)
 typedef struct {
     u32 event;
@@ -184,11 +218,13 @@ typedef struct {
         VirtIOSCSICmdReq      cmd;
         VirtIOSCSICtrlTMFReq  tmf;
         VirtIOSCSICtrlANReq   an;
+        VirtIOSCSICtrlGoogleReq google;
     } req;
     union {
         VirtIOSCSICmdResp     cmd;
         VirtIOSCSICtrlTMFResp tmf;
         VirtIOSCSICtrlANResp  an;
+        VirtIOSCSICtrlGoogleResp google;
         VirtIOSCSIEvent       event;
     } resp;
 } VirtIOSCSICmd, * PVirtIOSCSICmd;
@@ -213,6 +249,7 @@ typedef struct
 
 #pragma pack(1)
 typedef struct _SRB_EXTENSION {
+    PSCSI_REQUEST_BLOCK   Srb;
     ULONG                 out;
     ULONG                 in;
     ULONG                 Xfer;
@@ -221,18 +258,41 @@ typedef struct _SRB_EXTENSION {
 #if (INDIRECT_SUPPORTED == 1)
     vring_desc_alias     desc[VIRTIO_MAX_SG];
 #endif
-}SRB_EXTENSION, * PSRB_EXTENSION;
+    PROCESSOR_NUMBER      procNum;
+ } SRB_EXTENSION, * PSRB_EXTENSION;
 #pragma pack()
 
 #pragma pack(1)
 typedef struct {
     SCSI_REQUEST_BLOCK    Srb;
     PSRB_EXTENSION        SrbExtension;
-}TMF_COMMAND, * PTMF_COMMAND;
+} TMF_COMMAND, * PTMF_COMMAND;
 #pragma pack()
+
+#ifdef ENABLE_WMI
+// Note: the members in these stat structs must be in the same
+// order as in the MOF file.
+typedef struct {
+    ULONGLONG TotalRequests;
+    ULONGLONG CompletedRequests;
+    ULONGLONG TotalKicks;
+    ULONGLONG SkippedKicks;
+    ULONGLONG TotalInterrupts;
+    ULONGLONG QueueFullEvents;
+} VIRTQUEUE_STATISTICS, *PVIRTQUEUE_STATISTICS;
+
+typedef struct {
+    ULONGLONG TotalRequests;
+    ULONGLONG CompletedRequests;
+    ULONGLONG ResetRequests;
+} TARGET_STATISTICS, *PTARGET_STATISTICS;
+#define MAX_TARGET 256
+#endif
 
 typedef struct _ADAPTER_EXTENSION {
     VirtIODevice          vdev;
+    VirtIODevice*         pvdev;
+
     PVOID                 uncachedExtensionVa;
     ULONG                 allocationSize;
 
@@ -256,7 +316,26 @@ typedef struct _ADAPTER_EXTENSION {
     USHORT                original_queue_num[4];  // last element used as pad.
 
     PVirtIOSCSIEventNode  events;
-}ADAPTER_EXTENSION, * PADAPTER_EXTENSION;
+
+    ULONG                 num_queues;
+    UCHAR                 cpu_to_vq_map[MAX_CPU];
+    ULONG                 perfFlags;
+
+    BOOLEAN               dpc_ok;
+    STOR_DPC              dpc[MAX_CPU];
+    PSCSI_REQUEST_BLOCK   pending_snapshot_rq;
+#ifdef ENABLE_WMI
+    SCSI_WMILIB_CONTEXT   WmiLibContext;
+    SCSI_WMILIB_CONTEXT   PdoWmiLibContext;
+    VIRTQUEUE_STATISTICS  QueueStats[MAX_CPU];
+    TARGET_STATISTICS     TargetStats[MAX_TARGET];
+    ULONG                 MaxTarget;
+#if (NTDDI_VERSION < NTDDI_WIN8)
+    USHORT                PortNumber;
+#endif
+#endif
+
+} ADAPTER_EXTENSION, * PADAPTER_EXTENSION;
 
 #if (MSI_SUPPORTED == 1)
 #ifndef PCIX_TABLE_POINTER

@@ -10,7 +10,7 @@
  *
 **********************************************************************/
 #include "ParaNdis-Oid.h"
-#include <sal.h>
+#include "kdebugprint.h"
 
 static const char VendorName[] = "Red Hat";
 
@@ -215,7 +215,7 @@ NDIS_STATUS ParaNdis_OidQueryCommon(PARANDIS_ADAPTER *pContext, tOidDesc *pOid)
         USHORT                                  us;
         NDIS_PNP_CAPABILITIES                   PMCaps;
     } u;
-#define SETINFO(field, value) pInfo = &u.##field; ulSize = sizeof(u.##field); u.##field = (value)
+#define SETINFO(field, value) pInfo = &u.field; ulSize = sizeof(u.field); u.field = (value)
     switch (pOid->Oid)
     {
     case OID_GEN_SUPPORTED_LIST:
@@ -413,7 +413,7 @@ NDIS_STATUS ParaNdis_OidQueryCommon(PARANDIS_ADAPTER *pContext, tOidDesc *pOid)
         break;
     case OID_802_3_MULTICAST_LIST:
         pInfo = pContext->MulticastData.MulticastList;
-        ulSize = pContext->MulticastData.nofMulticastEntries * ETH_LENGTH_OF_ADDRESS;
+        ulSize = pContext->MulticastData.nofMulticastEntries * ETH_ALEN;
         break;
     case OID_802_3_MAXIMUM_LIST_SIZE:
         SETINFO(ul, PARANDIS_MULTICAST_LIST_SIZE);

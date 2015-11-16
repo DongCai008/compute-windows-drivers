@@ -1,5 +1,5 @@
 /**********************************************************************
- * Copyright (c) 2012  Red Hat, Inc.
+ * Copyright (c) 2012-2015 Red Hat, Inc.
  *
  * File: utils.c
  *
@@ -17,6 +17,7 @@
 int virtioDebugLevel;
 int bDebugPrint;
 int nViostorDebugLevel;
+ULONG disabledPerfOptions = 0;
 
 #define TEMP_BUFFER_SIZE	256
 
@@ -69,13 +70,13 @@ static void NoDebugPrintFunc(const char *format, ...)
 {
 
 }
-void InitializeDebugPrints(IN PDRIVER_OBJECT  DriverObject, IN PUNICODE_STRING RegistryPath)
+void InitializeDriverOptions(IN PDRIVER_OBJECT DriverObject, IN PUNICODE_STRING RegistryPath)
 {
 #ifdef ENABLE_TRACE
     if (RegistryPath != NULL) {
         USHORT nFromLen = RegistryPath->Length;
         WCHAR wszRegistryPath[TEMP_BUFFER_SIZE];
-        RTL_QUERY_REGISTRY_TABLE QueryTable[3];
+        RTL_QUERY_REGISTRY_TABLE QueryTable[4];
         NTSTATUS status;
         nViostorDebugLevel = 0;
         if (RegistryPath->Length + sizeof(WCHAR) <= sizeof(wszRegistryPath)) {
@@ -88,9 +89,15 @@ void InitializeDebugPrints(IN PDRIVER_OBJECT  DriverObject, IN PUNICODE_STRING R
             QueryTable[1].Name = L"DebugLevel";
             QueryTable[1].Flags = RTL_QUERY_REGISTRY_DIRECT;
             QueryTable[1].EntryContext = &nViostorDebugLevel;
+            QueryTable[2].Name = L"DisabledPerfOptions";
+            QueryTable[2].Flags = RTL_QUERY_REGISTRY_DIRECT;
+            QueryTable[2].EntryContext = &disabledPerfOptions;
             status = RtlQueryRegistryValues(RTL_REGISTRY_ABSOLUTE,
-                wszRegistryPath, QueryTable, NULL, NULL);
+                                            wszRegistryPath, QueryTable, NULL, NULL);
         }
+    }
+    else {
+        nViostorDebugLevel = 4;
     }
 #else
     nViostorDebugLevel = 0;
@@ -218,3 +225,4 @@ char *DbgGetScsiOpStr(IN PSCSI_REQUEST_BLOCK Srb)
     }
     return scsiOpStr;
 }
+

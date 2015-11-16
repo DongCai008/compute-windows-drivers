@@ -1,17 +1,10 @@
 #pragma once
 
 extern "C" {
-#include <ndis.h>
-#include <sal.h>
-
-#if NTDDI_VERSION > NTDDI_VISTA
-#include <concurrencysal.h>
-#else
-#define _Requires_lock_held_(lock)
-#define _Acquires_shared_lock_(lock)
-#define _Acquires_exclusive_lock_(lock)
-#endif
+#include "osdep.h"
 }
+
+#include "kdebugprint.h"
 
 typedef enum
 {
@@ -214,16 +207,16 @@ public:
     {
         CLockedContext<TAccessStrategy> LockedContext(*this);
         InsertHeadList(&m_List, Entry->GetListEntry());
-        CounterIncrement();
-        return GetCount();
+        TCountingStrategy::CounterIncrement();
+        return TCountingStrategy::GetCount();
     }
 
     ULONG PushBack(TEntryType *Entry)
     {
         CLockedContext<TAccessStrategy> LockedContext(*this);
         InsertTailList(&m_List, Entry->GetListEntry());
-        CounterIncrement();
-        return GetCount();
+        TCountingStrategy::CounterIncrement();
+        return TCountingStrategy::GetCount();
     }
 
     void Remove(TEntryType *Entry)
@@ -277,14 +270,14 @@ private:
 
     TEntryType *Pop_LockLess()
     {
-        CounterDecrement();
+        TCountingStrategy::CounterDecrement();
         return TEntryType::GetByListEntry(RemoveHeadList(&m_List));
     }
 
     void Remove_LockLess(PLIST_ENTRY Entry)
     {
         RemoveEntryList(Entry);
-        CounterDecrement();
+        TCountingStrategy::CounterDecrement();
     }
 
     LIST_ENTRY m_List;
@@ -352,7 +345,7 @@ bool __inline ParaNdis_IsPassive()
 #define RW_LOCK_62
 #elif NDIS_SUPPORT_NDIS6
 #define RW_LOCK_60
-#elif
+#else
 #error  Read/Write lock not supported by NDIS before 6.0
 #endif
 
@@ -497,3 +490,45 @@ typedef CNdisAutoRWLock<&CNdisRWLock::acquireWriteDpr, &CNdisRWLock::releaseDpr>
   if more than one bit is raised */
 
 ULONG ParaNdis_GetIndexFromAffinity(KAFFINITY affinity);
+
+ULONG ParaNdis_GetSystemCPUCount();
+
+template <size_t PrintWidth, size_t ColumnWidth, typename TTable, typename... AccessorsFuncs>
+void ParaNdis_PrintTable(int DebugPrintLevel, TTable table, size_t Size, LPCSTR Format, AccessorsFuncs... Accessors)
+{
+    CHAR Line[PrintWidth + 1];
+    CHAR *LinePos, *End;
+    NTSTATUS Res;
+
+    CHAR FullFormat[32] = "%d: ";
+
+    if (RtlStringCbCatA(FullFormat, sizeof(FullFormat), Format) != STATUS_SUCCESS)
+    {
+        DPrintf(0, ("[%s] - format concatenation failed for %s\n", __FUNCTION__, Format));
+        return;
+    }
+
+    size_t  i = 0;
+    memset(Line, ' ', sizeof(Line));
+    Line[PrintWidth] = 0;
+    LinePos = Line;
+
+    while (i < Size)
+    {
+        for (size_t j = 0; j < PrintWidth / ColumnWidth && i < Size; j++, i++)
+        {
+            Res = RtlStringCbPrintfExA(LinePos, ColumnWidth, &End, NULL, STRSAFE_FILL_ON_FAILURE | ' ',
+                FullFormat, i, Accessors(table + i)...);
+            if (Res == STATUS_SUCCESS)
+                *End = ' ';
+            LinePos += ColumnWidth;
+
+        }
+        DPrintf(DebugPrintLevel, ("%s", Line));
+        memset(Line, ' ', sizeof(Line));
+        Line[PrintWidth] = 0;
+        LinePos = Line;
+    }
+}
+void ParaNdis_PrintCharArray(int DebugPrintLevel, const CCHAR *data, size_t length);
+

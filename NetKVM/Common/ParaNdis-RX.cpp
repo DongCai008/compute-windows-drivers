@@ -1,12 +1,19 @@
 #include "ndis56common.h"
+#include "kdebugprint.h"
+#include "ParaNdis_DebugHistory.h"
 
 CParaNdisRX::CParaNdisRX() : m_nReusedRxBuffersCounter(0), m_NetNofReceiveBuffers(0)
 {
     InitializeListHead(&m_NetReceiveBuffers);
+
+    NdisAllocateSpinLock(&m_UnclassifiedPacketsQueue.Lock);
+    InitializeListHead(&m_UnclassifiedPacketsQueue.BuffersList);
+    m_UnclassifiedPacketsQueue.ActiveProcessorsCount = 0;
 }
 
 CParaNdisRX::~CParaNdisRX()
 {
+    NdisFreeSpinLock(&m_UnclassifiedPacketsQueue.Lock);
 }
 
 bool CParaNdisRX::Create(PPARANDIS_ADAPTER Context, UINT DeviceQueueIndex)
@@ -25,16 +32,22 @@ bool CParaNdisRX::Create(PPARANDIS_ADAPTER Context, UINT DeviceQueueIndex)
 
     m_nReusedRxBuffersLimit = m_Context->NetMaxReceiveBuffers / 4 + 1;
 
-    PrepareReceiveBuffers();
+    if (!PrepareReceiveBuffers()) {
+        DPrintf(0, ("CParaNdisRX::Create - PrepareReceiveBuffers failed"));
+        return false;
+    }
 
     return true;
 }
 
 int CParaNdisRX::PrepareReceiveBuffers()
 {
-    int nRet = 0;
     UINT i;
     DEBUG_ENTRY(4);
+
+    NdisZeroMemory(m_ReservedRxBufferMemory, sizeof(m_ReservedRxBufferMemory));
+    m_RxBufferIndex = 0;
+    m_RxBufferOffset = 0;
 
     for (i = 0; i < m_Context->NetMaxReceiveBuffers; ++i)
     {
@@ -42,13 +55,11 @@ int CParaNdisRX::PrepareReceiveBuffers()
         if (!pBuffersDescriptor) break;
 
         pBuffersDescriptor->Queue = this;
-
         if (!AddRxBufferToQueue(pBuffersDescriptor))
         {
             ParaNdis_FreeRxBufferDescriptor(m_Context, pBuffersDescriptor);
             break;
         }
-
         InsertTailList(&m_NetReceiveBuffers, &pBuffersDescriptor->listEntry);
 
         m_NetNofReceiveBuffers++;
@@ -60,7 +71,7 @@ int CParaNdisRX::PrepareReceiveBuffers()
 
     m_VirtQueue.Kick();
 
-    return nRet;
+    return m_NetNofReceiveBuffers;
 }
 
 pRxNetDescriptor CParaNdisRX::CreateRxDescriptorOnInit()
@@ -87,7 +98,7 @@ pRxNetDescriptor CParaNdisRX::CreateRxDescriptorOnInit()
     for (p->PagesAllocated = 0; p->PagesAllocated < ulNumPages; p->PagesAllocated++)
     {
         p->PhysicalPages[p->PagesAllocated].size = PAGE_SIZE;
-        if (!ParaNdis_InitialAllocatePhysicalMemory(m_Context, &p->PhysicalPages[p->PagesAllocated]))
+        if (!InitialAllocatePhysicalMemory(&p->PhysicalPages[p->PagesAllocated]))
             goto error_exit;
 
         p->BufferSGArray[p->PagesAllocated].physAddr = p->PhysicalPages[p->PagesAllocated].Physical;
@@ -124,12 +135,44 @@ BOOLEAN CParaNdisRX::AddRxBufferToQueue(pRxNetDescriptor pBufferDescriptor)
         m_Context->bUseIndirect ? pBufferDescriptor->IndirectArea.Physical.QuadPart : 0);
 }
 
+BOOLEAN CParaNdisRX::InitialAllocatePhysicalMemory(tCompletePhysicalAddress* Address) {
+    if (Address->size % PAGE_SIZE) {
+        DPrintf(0, ("[%s] size (%d) is not page aligned\n", __FUNCTION__, Address->size));
+        return FALSE;
+    }
+    while (m_RxBufferIndex < ARRAYSIZE(m_ReservedRxBufferMemory)) {
+        tCompletePhysicalAddress* bulkBuffer = &m_ReservedRxBufferMemory[m_RxBufferIndex];
+        if (bulkBuffer->size == 0) {
+            bulkBuffer->size = 1024 * 256;
+            if (!ParaNdis_InitialAllocatePhysicalMemory(m_Context, bulkBuffer)) {
+              DPrintf(0, ("[%s] fail to allocate memory with slot %d\n", __FUNCTION__, m_RxBufferIndex));
+              break;
+            }
+        }
+        if (bulkBuffer->size - m_RxBufferOffset >= Address->size) {
+            Address->Physical.QuadPart = bulkBuffer->Physical.QuadPart + m_RxBufferOffset;
+            Address->Virtual = (PCHAR)(bulkBuffer->Virtual) + m_RxBufferOffset;
+            m_RxBufferOffset += Address->size;
+            return TRUE;
+        } else {
+            m_RxBufferIndex++;
+            m_RxBufferOffset = 0;
+        }
+    }
+    return FALSE;
+}
+
 void CParaNdisRX::FreeRxDescriptorsFromList()
 {
     while (!IsListEmpty(&m_NetReceiveBuffers))
     {
         pRxNetDescriptor pBufferDescriptor = (pRxNetDescriptor)RemoveHeadList(&m_NetReceiveBuffers);
         ParaNdis_FreeRxBufferDescriptor(m_Context, pBufferDescriptor);
+    }
+    for (UINT i = 0; i < ARRAYSIZE(m_ReservedRxBufferMemory); i++) {
+        if (m_ReservedRxBufferMemory[i].Virtual) {
+            ParaNdis_FreePhysicalMemory(m_Context, &m_ReservedRxBufferMemory[i]);
+        }
     }
 }
 
@@ -177,14 +220,14 @@ VOID CParaNdisRX::ProcessRxRing(CCHAR nCurrCpuReceiveQueue)
     pRxNetDescriptor pBufferDescriptor;
     unsigned int nFullLength;
 
+#ifndef PARANDIS_SUPPORT_RSS
+    UNREFERENCED_PARAMETER(nCurrCpuReceiveQueue);
+#endif
+
     CLockedContext<CNdisSpinLock> autoLock(m_Lock);
 
     while (NULL != (pBufferDescriptor = (pRxNetDescriptor)m_VirtQueue.GetBuf(&nFullLength)))
     {
-        CCHAR nTargetReceiveQueueNum;
-        GROUP_AFFINITY TargetAffinity;
-        PROCESSOR_NUMBER TargetProcessor;
-
         /* The counter m_rxPacketsOutsideRing is increased when the packet is removed from ring; it is decreased
         in CParaNdisRX::ReuseReceiveBuffer either in case of error or when NDIS calls ParaNdis6_ReturnNetBufferLists
         indicating the return of a receive buffer under miniport driver ownership */
@@ -212,19 +255,33 @@ VOID CParaNdisRX::ProcessRxRing(CCHAR nCurrCpuReceiveQueue)
             continue;
         }
 
+#ifdef PARANDIS_SUPPORT_RSS
+        CCHAR nTargetReceiveQueueNum;
+        GROUP_AFFINITY TargetAffinity;
+        PROCESSOR_NUMBER TargetProcessor;
+
         nTargetReceiveQueueNum = ParaNdis_GetScalingDataForPacket(
             m_Context,
             &pBufferDescriptor->PacketInfo,
             &TargetProcessor);
 
-        ParaNdis_ReceiveQueueAddBuffer(&m_Context->ReceiveQueues[nTargetReceiveQueueNum], pBufferDescriptor);
-        ParaNdis_ProcessorNumberToGroupAffinity(&TargetAffinity, &TargetProcessor);
-
-        if ((nTargetReceiveQueueNum != PARANDIS_RECEIVE_QUEUE_UNCLASSIFIED) &&
-            (nTargetReceiveQueueNum != nCurrCpuReceiveQueue))
+        if (nTargetReceiveQueueNum == PARANDIS_RECEIVE_UNCLASSIFIED_PACKET)
         {
-            ParaNdis_QueueRSSDpc(m_Context, m_messageIndex, &TargetAffinity);
+            ParaNdis_ReceiveQueueAddBuffer(&m_UnclassifiedPacketsQueue, pBufferDescriptor);
         }
+        else
+        {
+            ParaNdis_ReceiveQueueAddBuffer(&m_Context->ReceiveQueues[nTargetReceiveQueueNum], pBufferDescriptor);
+
+            if (nTargetReceiveQueueNum != nCurrCpuReceiveQueue)
+            {
+                ParaNdis_ProcessorNumberToGroupAffinity(&TargetAffinity, &TargetProcessor);
+                ParaNdis_QueueRSSDpc(m_Context, m_messageIndex, &TargetAffinity);
+            }
+        }
+#else
+       ParaNdis_ReceiveQueueAddBuffer(&m_UnclassifiedPacketsQueue, pBufferDescriptor);
+#endif
     }
 }
 

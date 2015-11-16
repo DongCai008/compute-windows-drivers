@@ -22,14 +22,6 @@
 
 #include <ntddk.h>
 
-#define u8 unsigned char
-#define u16 unsigned short
-#define u32 unsigned long
-#define u64 ULONGLONG
-#define __u8 unsigned char
-#define __u16 unsigned short
-#define __u32 unsigned long
-#define __u64 ULONGLONG
 #define ktime_t ULONGLONG
 #define ktime_get() KeQueryPerformanceCounter(NULL).QuadPart
 
@@ -40,11 +32,13 @@
 #define BUG_ON(a)
 #define WARN_ON(a)
 
-#ifndef bool
+#ifndef __cplusplus
 #define bool int
 #define false FALSE
 #define true TRUE
+#ifndef INLINE_DEFINED
 #define inline __forceinline
+#endif
 #endif
 
 #ifdef DBG

@@ -1,5 +1,5 @@
 /**********************************************************************
- * Copyright (c) 2012  Red Hat, Inc.
+ * Copyright (c) 2012-2015 Red Hat, Inc.
  *
  * File: helper.c
  *
@@ -23,42 +23,92 @@
 #define SET_VA_PA()   va = NULL; pa = 0;
 #endif
 
-BOOLEAN
-SynchronizedSRBRoutine(
+VOID
+FORCEINLINE
+Lock(
     IN PVOID DeviceExtension,
-    IN PVOID Context
+    IN ULONG MessageID,
+    OUT PSTOR_LOCK_HANDLE LockHandle
     )
 {
-    PADAPTER_EXTENSION  adaptExt = (PADAPTER_EXTENSION)DeviceExtension;
-    PSCSI_REQUEST_BLOCK Srb      = (PSCSI_REQUEST_BLOCK) Context;
-    PSRB_EXTENSION      srbExt   = (PSRB_EXTENSION)Srb->SrbExtension;
-    PVOID               va;
-    ULONGLONG           pa;
-
-ENTER_FN();
-    SET_VA_PA();
-    if (virtqueue_add_buf(adaptExt->vq[VIRTIO_SCSI_REQUEST_QUEUE_0],
-                     &srbExt->sg[0],
-                     srbExt->out, srbExt->in,
-                     &srbExt->cmd, va, pa) >= 0){
-        virtqueue_kick(adaptExt->vq[VIRTIO_SCSI_REQUEST_QUEUE_0]);
-        return TRUE;
+    PADAPTER_EXTENSION adaptExt = (PADAPTER_EXTENSION)DeviceExtension;
+    if (adaptExt->num_queues > 1) {
+        // Queue numbers start at 0, message ids at 1.
+        NT_ASSERT(MessageID > VIRTIO_SCSI_REQUEST_QUEUE_0);
+        StorPortAcquireSpinLock(DeviceExtension, DpcLock, &adaptExt->dpc[MessageID - VIRTIO_SCSI_REQUEST_QUEUE_0 - 1], LockHandle);
     }
-    Srb->SrbStatus = SRB_STATUS_BUSY;
-    StorPortBusy(DeviceExtension, 2);
-    virtqueue_kick(adaptExt->vq[VIRTIO_SCSI_REQUEST_QUEUE_0]);
-EXIT_ERR();
-    return FALSE;
+    else {
+        StorPortAcquireSpinLock(DeviceExtension, InterruptLock, NULL, LockHandle);
+    }
+}
+
+VOID
+FORCEINLINE
+Unlock(
+    IN PVOID DeviceExtension,
+    IN ULONG MessageID,
+    IN PSTOR_LOCK_HANDLE LockHandle
+    )
+{
+    StorPortReleaseSpinLock(DeviceExtension, LockHandle);
 }
 
 BOOLEAN
 SendSRB(
     IN PVOID DeviceExtension,
-    IN PSCSI_REQUEST_BLOCK Srb
+    IN PSRB_TYPE Srb
     )
 {
+    PADAPTER_EXTENSION  adaptExt = (PADAPTER_EXTENSION)DeviceExtension;
+    PSRB_EXTENSION      srbExt   = SRB_EXTENSION(Srb);
+    PVOID               va = NULL;
+    ULONGLONG           pa = 0;
+    ULONG               QueueNumber = 0;
+    ULONG               MessageId = 0;
+    BOOLEAN             result = FALSE;
+    bool                notify = FALSE;
+    STOR_LOCK_HANDLE    LockHandle = { 0 };
 ENTER_FN();
-    return StorPortSynchronizeAccess(DeviceExtension, SynchronizedSRBRoutine, (PVOID)Srb);
+    SET_VA_PA();
+    QueueNumber = adaptExt->cpu_to_vq_map[srbExt->procNum.Number];
+    TRACE3(TRACE_LEVEL_INFORMATION, DRIVER_IO, "SrbInfo", "issued on", srbExt->procNum.Number,
+        "group", srbExt->procNum.Group, "QueueNumber", QueueNumber);
+
+    MessageId = QueueNumber + 1;
+    Lock(DeviceExtension, MessageId, &LockHandle);
+    if (CHECKFLAG(adaptExt->perfFlags, STOR_PERF_OPTIMIZE_FOR_COMPLETION_DURING_STARTIO)) {
+        ProcessQueue(DeviceExtension, MessageId, FALSE);
+    }
+    if (virtqueue_add_buf(adaptExt->vq[QueueNumber],
+                     &srbExt->sg[0],
+                     srbExt->out, srbExt->in,
+                     &srbExt->cmd, va, pa) >= 0){
+#ifdef ENABLE_WMI
+        adaptExt->QueueStats[QueueNumber - VIRTIO_SCSI_REQUEST_QUEUE_0].TotalRequests++;
+        adaptExt->TargetStats[SRB_TARGET_ID(Srb)].TotalRequests++;
+#endif
+        result = TRUE;
+        notify = virtqueue_kick_prepare(adaptExt->vq[QueueNumber]);
+    }
+    else {
+#ifdef ENABLE_WMI
+        adaptExt->QueueStats[QueueNumber - VIRTIO_SCSI_REQUEST_QUEUE_0].QueueFullEvents++;
+#endif
+        TRACE1(TRACE_LEVEL_WARNING, DRIVER_IO, "Cant add packet to queue", "QueueNumber", QueueNumber);
+    }
+    Unlock(DeviceExtension, MessageId, &LockHandle);
+    if (notify) {
+        virtqueue_notify(adaptExt->vq[QueueNumber]);
+#ifdef ENABLE_WMI
+        adaptExt->QueueStats[QueueNumber - VIRTIO_SCSI_REQUEST_QUEUE_0].TotalKicks++;
+#endif
+    }
+    else {
+#ifdef ENABLE_WMI
+        adaptExt->QueueStats[QueueNumber - VIRTIO_SCSI_REQUEST_QUEUE_0].SkippedKicks++;
+#endif
+    }
+    return result;
 EXIT_FN();
 }
 
@@ -145,6 +195,107 @@ ENTER_FN();
     return TRUE;
 }
 
+BOOLEAN
+ReportDriverVersion(
+    IN PVOID DeviceExtension
+    )
+{
+    PADAPTER_EXTENSION adaptExt = (PADAPTER_EXTENSION)DeviceExtension;
+    PSCSI_REQUEST_BLOCK   Srb = &adaptExt->tmf_cmd.Srb;
+    PSRB_EXTENSION        srbExt = adaptExt->tmf_cmd.SrbExtension;
+    VirtIOSCSICmd         *cmd = &srbExt->cmd;
+    ULONG                 fragLen;
+    ULONG                 sgElement;
+
+    ENTER_FN();
+    if (adaptExt->dump_mode ||
+        !CHECKBIT(adaptExt->features, VIRTIO_SCSI_F_GOOGLE_REPORT_DRIVER_VERSION)) {
+        return TRUE;
+    }
+    ASSERT(adaptExt->tmf_infly == FALSE);
+    Srb->SrbExtension = srbExt;
+    memset((PVOID)cmd, 0, sizeof(VirtIOSCSICmd));
+    cmd->sc = Srb;
+    cmd->req.google.lun[0] = 1;
+    cmd->req.google.lun[1] = 0;
+    cmd->req.google.lun[2] = 0;
+    cmd->req.google.lun[3] = 0;
+    cmd->req.google.type = VIRTIO_SCSI_T_GOOGLE;
+    cmd->req.google.subtype = VIRTIO_SCSI_T_GOOGLE_REPORT_DRIVER_VERSION;
+    cmd->req.google.data = _NT_TARGET_MIN;
+
+    sgElement = 0;
+    srbExt->sg[sgElement].physAddr = StorPortGetPhysicalAddress(DeviceExtension, NULL, &cmd->req.tmf, &fragLen);
+    srbExt->sg[sgElement].length = sizeof(cmd->req.google);
+    sgElement++;
+    srbExt->out = sgElement;
+    srbExt->sg[sgElement].physAddr = StorPortGetPhysicalAddress(DeviceExtension, NULL, &cmd->resp.tmf, &fragLen);
+    srbExt->sg[sgElement].length = sizeof(cmd->resp.google);
+    sgElement++;
+    srbExt->in = sgElement - srbExt->out;
+    StorPortPause(DeviceExtension, 60);
+    if (!SendTMF(DeviceExtension, Srb)) {
+        StorPortResume(DeviceExtension);
+        return FALSE;
+    }
+    adaptExt->tmf_infly = TRUE;
+    return TRUE;
+}
+
+BOOLEAN
+ProceedWithSnapshot(
+    IN PVOID DeviceExtension
+    )
+{
+    PADAPTER_EXTENSION    adaptExt = (PADAPTER_EXTENSION)DeviceExtension;
+    PSCSI_REQUEST_BLOCK   Srb = &adaptExt->tmf_cmd.Srb;
+    PSRB_EXTENSION        srbExt = adaptExt->tmf_cmd.SrbExtension;
+    VirtIOSCSICmd         *cmd = &srbExt->cmd;
+    ULONG                 fragLen;
+    ULONG                 sgElement;
+
+    ENTER_FN();
+    if (adaptExt->dump_mode) {
+        return TRUE;
+    }
+
+    // TODO(nataliep): re-think this logic as Feng pointed out.
+    // The tmf_inflight logic is too harsh here.
+    ASSERT(adaptExt->tmf_infly == FALSE);
+    Srb->SrbExtension = srbExt;
+    memset((PVOID)cmd, 0, sizeof(VirtIOSCSICmd));
+    cmd->sc = Srb;
+    // TODO(nataliep): copy target and lun info back from the SRB that came from
+    // snapshot requestor (adaptExt->pending_snapshot_srb).
+    cmd->req.google.lun[0] = 1;
+    cmd->req.google.lun[1] = 0;
+    cmd->req.google.lun[2] = 0;
+    cmd->req.google.lun[3] = 0;
+    cmd->req.google.type = VIRTIO_SCSI_T_GOOGLE;
+    cmd->req.google.subtype = VIRTIO_SCSI_T_GOOGLE_REPORT_SNAPSHOT_READY;
+    cmd->req.google.data = 0;  // TBD
+
+    sgElement = 0;
+    srbExt->sg[sgElement].physAddr =
+    StorPortGetPhysicalAddress(DeviceExtension, NULL, &cmd->req.tmf, &fragLen);
+    srbExt->sg[sgElement].length = sizeof(cmd->req.google);
+    sgElement++;
+    srbExt->out = sgElement;
+    srbExt->sg[sgElement].physAddr =
+    StorPortGetPhysicalAddress(DeviceExtension, NULL, &cmd->resp.tmf, &fragLen);
+    srbExt->sg[sgElement].length = sizeof(cmd->resp.google);
+    sgElement++;
+    srbExt->in = sgElement - srbExt->out;
+    StorPortPause(DeviceExtension, 60);
+    // TODO(nataliep): this block needs to be implemented correctly:
+    if (!SendTMF(DeviceExtension, Srb)) {
+        StorPortResume(DeviceExtension);
+        return FALSE;
+    }
+    adaptExt->tmf_infly = TRUE;
+    return TRUE;
+}
+
 VOID
 ShutDown(
     IN PVOID DeviceExtension
@@ -153,14 +304,14 @@ ShutDown(
     ULONG index;
     PADAPTER_EXTENSION adaptExt = (PADAPTER_EXTENSION)DeviceExtension;
 ENTER_FN();
-    VirtIODeviceReset(&adaptExt->vdev);
+    VirtIODeviceReset(adaptExt->pvdev);
     StorPortWritePortUshort(DeviceExtension, (PUSHORT)(adaptExt->device_base + VIRTIO_PCI_GUEST_FEATURES), 0);
-    for (index = VIRTIO_SCSI_CONTROL_QUEUE; index < VIRTIO_SCSI_QUEUE_LAST; ++index) {
+    for (index = VIRTIO_SCSI_CONTROL_QUEUE; index < adaptExt->num_queues + VIRTIO_SCSI_REQUEST_QUEUE_0; ++index) {
         if (adaptExt->vq[index]) {
             virtqueue_shutdown(adaptExt->vq[index]);
             VirtIODeviceDeleteQueue(adaptExt->vq[index], NULL);
             if (adaptExt->dump_mode && adaptExt->original_queue_num[index] != 0) {
-                 StorPortWritePortUshort(DeviceExtension, (PUSHORT)(adaptExt->device_base + VIRTIO_PCI_QUEUE_NUM), adaptExt->original_queue_num[2]);
+                 StorPortWritePortUshort(DeviceExtension, (PUSHORT)(adaptExt->device_base + VIRTIO_PCI_QUEUE_NUM), adaptExt->original_queue_num[index]);
             }
             adaptExt->vq[index] = NULL;
         }
@@ -171,32 +322,32 @@ EXIT_FN();
 VOID
 GetScsiConfig(
     IN PVOID DeviceExtension
-)
+    )
 {
     PADAPTER_EXTENSION adaptExt = (PADAPTER_EXTENSION)DeviceExtension;
 ENTER_FN();
 
     adaptExt->features = StorPortReadPortUlong(DeviceExtension, (PULONG)(adaptExt->device_base + VIRTIO_PCI_HOST_FEATURES));
 
-    VirtIODeviceGet( &adaptExt->vdev, FIELD_OFFSET(VirtIOSCSIConfig, seg_max),
+    VirtIODeviceGet( adaptExt->pvdev, FIELD_OFFSET(VirtIOSCSIConfig, seg_max),
                       &adaptExt->scsi_config.seg_max, sizeof(adaptExt->scsi_config.seg_max));
-    VirtIODeviceGet( &adaptExt->vdev, FIELD_OFFSET(VirtIOSCSIConfig, num_queues),
+    VirtIODeviceGet( adaptExt->pvdev, FIELD_OFFSET(VirtIOSCSIConfig, num_queues),
                       &adaptExt->scsi_config.num_queues, sizeof(adaptExt->scsi_config.num_queues));
-    VirtIODeviceGet( &adaptExt->vdev, FIELD_OFFSET(VirtIOSCSIConfig, max_sectors),
+    VirtIODeviceGet( adaptExt->pvdev, FIELD_OFFSET(VirtIOSCSIConfig, max_sectors),
                       &adaptExt->scsi_config.max_sectors, sizeof(adaptExt->scsi_config.max_sectors));
-    VirtIODeviceGet( &adaptExt->vdev, FIELD_OFFSET(VirtIOSCSIConfig, cmd_per_lun),
+    VirtIODeviceGet( adaptExt->pvdev, FIELD_OFFSET(VirtIOSCSIConfig, cmd_per_lun),
                       &adaptExt->scsi_config.cmd_per_lun, sizeof(adaptExt->scsi_config.cmd_per_lun));
-    VirtIODeviceGet( &adaptExt->vdev, FIELD_OFFSET(VirtIOSCSIConfig, event_info_size),
+    VirtIODeviceGet( adaptExt->pvdev, FIELD_OFFSET(VirtIOSCSIConfig, event_info_size),
                       &adaptExt->scsi_config.event_info_size, sizeof(adaptExt->scsi_config.event_info_size));
-    VirtIODeviceGet( &adaptExt->vdev, FIELD_OFFSET(VirtIOSCSIConfig, sense_size),
+    VirtIODeviceGet( adaptExt->pvdev, FIELD_OFFSET(VirtIOSCSIConfig, sense_size),
                       &adaptExt->scsi_config.sense_size, sizeof(adaptExt->scsi_config.sense_size));
-    VirtIODeviceGet( &adaptExt->vdev, FIELD_OFFSET(VirtIOSCSIConfig, cdb_size),
+    VirtIODeviceGet( adaptExt->pvdev, FIELD_OFFSET(VirtIOSCSIConfig, cdb_size),
                       &adaptExt->scsi_config.cdb_size, sizeof(adaptExt->scsi_config.cdb_size));
-    VirtIODeviceGet( &adaptExt->vdev, FIELD_OFFSET(VirtIOSCSIConfig, max_channel),
+    VirtIODeviceGet( adaptExt->pvdev, FIELD_OFFSET(VirtIOSCSIConfig, max_channel),
                       &adaptExt->scsi_config.max_channel, sizeof(adaptExt->scsi_config.max_channel));
-    VirtIODeviceGet( &adaptExt->vdev, FIELD_OFFSET(VirtIOSCSIConfig, max_target),
+    VirtIODeviceGet( adaptExt->pvdev, FIELD_OFFSET(VirtIOSCSIConfig, max_target),
                       &adaptExt->scsi_config.max_target, sizeof(adaptExt->scsi_config.max_target));
-    VirtIODeviceGet( &adaptExt->vdev, FIELD_OFFSET(VirtIOSCSIConfig, max_lun),
+    VirtIODeviceGet( adaptExt->pvdev, FIELD_OFFSET(VirtIOSCSIConfig, max_lun),
                       &adaptExt->scsi_config.max_lun, sizeof(adaptExt->scsi_config.max_lun));
 
 EXIT_FN();
@@ -204,12 +355,13 @@ EXIT_FN();
 
 BOOLEAN
 InitHW(
-    IN PVOID DeviceExtension, 
+    IN PVOID DeviceExtension,
     IN PPORT_CONFIGURATION_INFORMATION ConfigInfo
     )
 {
     PACCESS_RANGE      accessRange;
     PADAPTER_EXTENSION adaptExt;
+    TRACE_CONTEXT_NO_SRB();
 
 ENTER_FN();
     adaptExt = (PADAPTER_EXTENSION)DeviceExtension;
@@ -217,16 +369,15 @@ ENTER_FN();
 
     ASSERT (FALSE == accessRange->RangeInMemory) ;
 
-    RhelDbgPrint(TRACE_LEVEL_INFORMATION, ("Port  Resource [%08I64X-%08I64X]\n",
-                accessRange->RangeStart.QuadPart,
-                accessRange->RangeStart.QuadPart +
-                accessRange->RangeLength));
+    TRACE2(TRACE_LEVEL_INFORMATION, DRIVER_START, "Port  Resource",
+        "Range start", accessRange->RangeStart.QuadPart,
+        "Range end", accessRange->RangeStart.QuadPart + accessRange->RangeLength);
 
     if ( accessRange->RangeLength < IO_PORT_LENGTH) {
         LogError(DeviceExtension,
                 SP_INTERNAL_ADAPTER_ERROR,
                 __LINE__);
-        RhelDbgPrint(TRACE_LEVEL_FATAL, ("Wrong access range %x bytes\n", accessRange->RangeLength));
+        TRACE1(TRACE_LEVEL_FATAL, DRIVER_START, "Wrong access range", "bytes", accessRange->RangeLength);
         return FALSE;
     }
 
@@ -242,13 +393,14 @@ ENTER_FN();
                 SP_INTERNAL_ADAPTER_ERROR,
                 __LINE__);
 
-        RhelDbgPrint(TRACE_LEVEL_FATAL, ("Couldn't map %x for %x bytes\n",
-                   (*ConfigInfo->AccessRanges)[0].RangeStart.LowPart,
-                   (*ConfigInfo->AccessRanges)[0].RangeLength));
+        TRACE2(TRACE_LEVEL_FATAL, DRIVER_START, "Couldn't map",
+            "RangeStart", (*ConfigInfo->AccessRanges)[0].RangeStart.LowPart,
+            "bytes", (*ConfigInfo->AccessRanges)[0].RangeLength);
         return FALSE;
     }
 
-    VirtIODeviceInitialize(&adaptExt->vdev, adaptExt->device_base, sizeof(adaptExt->vdev));
+    adaptExt->pvdev = &adaptExt->vdev;
+    VirtIODeviceInitialize(adaptExt->pvdev, adaptExt->device_base, sizeof(VirtIODevice));
 
 EXIT_FN();
     return TRUE;

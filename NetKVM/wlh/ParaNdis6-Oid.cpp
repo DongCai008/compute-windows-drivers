@@ -13,7 +13,8 @@
 
 #include "ParaNdis-Oid.h"
 #include "ParaNdis6.h"
-#include <sal.h>
+#include "kdebugprint.h"
+#include "ParaNdis_DebugHistory.h"
 
 static NDIS_IO_WORKITEM_FUNCTION OnSetPowerWorkItem;
 
@@ -372,7 +373,7 @@ static NDIS_STATUS ParaNdis_OidQuery(PARANDIS_ADAPTER *pContext, tOidDesc *pOid)
     BOOLEAN bFreeInfo = FALSE;
     LONGLONG ul64LinkSpeed = 0;
 
-#define SETINFO(field, value) pInfo = &u.##field; ulSize = sizeof(u.##field); u.##field = (value)
+#define SETINFO(field, value) pInfo = &u.field; ulSize = sizeof(u.field); u.field = (value)
     switch(pOid->Oid)
     {
         case OID_GEN_LINK_SPEED:
@@ -763,7 +764,7 @@ static void BuildOffloadStatusReport(
 {
     // see
 #if 1
-#define SYNC_STRUCT(_struct, field) update->##_struct.##field = (Current->##_struct.##field == NDIS_OFFLOAD_SUPPORTED) ? NDIS_OFFLOAD_SET_ON : NDIS_OFFLOAD_SET_OFF
+#define SYNC_STRUCT(_struct, field) update->_struct.field = (Current->_struct.field == NDIS_OFFLOAD_SUPPORTED) ? NDIS_OFFLOAD_SET_ON : NDIS_OFFLOAD_SET_OFF
 #define SYNC_FIELD_TX4(field) SYNC_STRUCT(IPv4Transmit,field)
 #define SYNC_FIELD_RX4(field) SYNC_STRUCT(IPv4Receive,field)
 #define SYNC_FIELD_TX6(field) SYNC_STRUCT(IPv6Transmit,field)
@@ -981,6 +982,7 @@ static NDIS_STATUS ApplyOffloadConfiguration(PARANDIS_ADAPTER *pContext,
     }
     else if (NDIS_OFFLOAD_PARAMETERS_LSOV1_ENABLED == pop->LsoV1 || NDIS_OFFLOAD_PARAMETERS_LSOV2_ENABLED  == pop->LsoV2IPv4)
     {
+        #pragma warning(suppress: 4463)
         if (fSupported.fTxLso) pf->fTxLso = 1;
         else
             bFailed = TRUE;
@@ -992,6 +994,7 @@ static NDIS_STATUS ApplyOffloadConfiguration(PARANDIS_ADAPTER *pContext,
     }
     else if (NDIS_OFFLOAD_PARAMETERS_LSOV2_ENABLED  == pop->LsoV2IPv6)
     {
+        #pragma warning(suppress: 4463)
         if (fSupported.fTxLsov6) pf->fTxLsov6 = 1;
         else
             bFailed = TRUE;

@@ -20,6 +20,10 @@
 
 #endif
 
+#if TARGETOS == 61
+#define _LargeQueueEntry
+#endif
+
 #if TARGETOS >= 60
 #define _LsoV2IPv4
 #define _LsoV2IPv6
@@ -32,7 +36,7 @@
 
 #if TARGETOS <= 51
 #define DEFAULT_CONNECT_RATE    "1000"
-#define DEFAULT_TX_CHECKSUM     "0" 
+#define DEFAULT_TX_CHECKSUM     "0"
 #define DEFAULT_RX_CHECKSUM     "0"
 #elif TARGETOS < 60
 #define DEFAULT_CONNECT_RATE    "10000"
@@ -81,13 +85,6 @@ HKR, Ndi\params\DebugLevel,         min,        0,          "0"
 HKR, Ndi\params\DebugLevel,         max,        0,          "8"
 HKR, Ndi\params\DebugLevel,         step,       0,          "1"
 
-HKR, Ndi\params\LogStatistics,      ParamDesc,  0,          %LogStatistics%
-HKR, Ndi\params\LogStatistics,      type,       0,          "int"
-HKR, Ndi\params\LogStatistics,      default,    0,          "0"
-HKR, Ndi\params\LogStatistics,      min,        0,          "0"
-HKR, Ndi\params\LogStatistics,      max,        0,          "10000"
-HKR, Ndi\params\LogStatistics,      step,       0,          "1"
-
 HKR, Ndi\params\MTU,                ParamDesc,  0,          %MTU%
 HKR, Ndi\params\MTU,                type,       0,          "long"
 HKR, Ndi\params\MTU,                default,    0,          "1500"
@@ -105,10 +102,19 @@ HKR, Ndi\Params\TxCapacity\enum,    "128",      0,          %String_128%
 HKR, Ndi\Params\TxCapacity\enum,    "256",      0,          %String_256%
 HKR, Ndi\Params\TxCapacity\enum,    "512",      0,          %String_512%
 HKR, Ndi\Params\TxCapacity\enum,    "1024",     0,          %String_1024%
+#if defined(_LargeQueueEntry)
+HKR, Ndi\Params\TxCapacity\enum,    "2048",     0,          %String_2048%
+HKR, Ndi\Params\TxCapacity\enum,    "4096",     0,          %String_4096%
+HKR, Ndi\Params\TxCapacity\enum,    "8192",     0,          %String_8192%
+#endif
 
 HKR, Ndi\params\RxCapacity,         ParamDesc,  0,          %RxCapacity%
 HKR, Ndi\params\RxCapacity,         type,       0,          "enum"
-HKR, Ndi\params\RxCapacity,         default,    0,          "256"
+#if defined(_LargeQueueEntry)
+HKR, Ndi\params\RxCapacity,         default,    0,          "8192"
+#else
+HKR, Ndi\params\RxCapacity,         default,    0,          "1024"
+#endif
 HKR, Ndi\Params\RxCapacity\enum,    "16",       0,          %String_16%
 HKR, Ndi\Params\RxCapacity\enum,    "32",       0,          %String_32%
 HKR, Ndi\Params\RxCapacity\enum,    "64",       0,          %String_64%
@@ -116,7 +122,11 @@ HKR, Ndi\Params\RxCapacity\enum,    "128",      0,          %String_128%
 HKR, Ndi\Params\RxCapacity\enum,    "256",      0,          %String_256%
 HKR, Ndi\Params\RxCapacity\enum,    "512",      0,          %String_512%
 HKR, Ndi\Params\RxCapacity\enum,    "1024",     0,          %String_1024%
-
+#if defined(_LargeQueueEntry)
+HKR, Ndi\Params\RxCapacity\enum,    "2048",     0,          %String_2048%
+HKR, Ndi\Params\RxCapacity\enum,    "4096",     0,          %String_4096%
+HKR, Ndi\Params\RxCapacity\enum,    "8192",     0,          %String_8192%
+#endif
 HKR, Ndi\params\NetworkAddress,     ParamDesc,  0,          %NetworkAddress%
 HKR, Ndi\params\NetworkAddress,     type,       0,          "edit"
 HKR, Ndi\params\NetworkAddress,     Optional,   0,          "1"
@@ -236,7 +246,6 @@ Offload.TxLSO = "Offload.Tx.LSO"
 Offload.RxCS = "Offload.Rx.Checksum"
 EnableLogging = "Logging.Enable"
 DebugLevel = "Logging.Level"
-LogStatistics = "Logging.Statistics(sec)"
 Tx = "Tx Enabled";
 Rx = "Rx Enabled";
 TxRx = "Rx & Tx Enabled";
@@ -283,6 +292,12 @@ String_128 = "128"
 String_256 = "256"
 String_512 = "512"
 String_1024 = "1024"
+#if defined(_LargeQueueEntry)
+String_2048 = "2048"
+String_4096 = "4096"
+String_8192 = "8192"
+#endif
+
 PriorityVlanTag = "Priority and VLAN tagging"
 PriorityOnly = "Priority"
 VLan = "VLan"

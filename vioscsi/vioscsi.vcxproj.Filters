@@ -70,5 +70,13 @@
     <ClCompile Include="..\VirtIO\VirtIORing.c">
       <Filter>VirtIo</Filter>
     </ClCompile>
+    <ClCompile Include="wmi.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <Mofcomp Include="perf.mof">
+      <Filter>Driver Files</Filter>
+    </Mofcomp>
   </ItemGroup>
 </Project>
