@@ -310,6 +310,12 @@ Copies the statistics for a virtqueue to the given destination.
     stats->LastUsedIdx = virtqueue_get_last_used_idx(AdapterExtension->vq[InstanceIdx + VIRTIO_SCSI_REQUEST_QUEUE_0]);
     stats->UsedIdx = virtqueue_get_used_idx(AdapterExtension->vq[InstanceIdx + VIRTIO_SCSI_REQUEST_QUEUE_0]);
     stats->QueueFullEvents = AdapterExtension->QueueStats[InstanceIdx].QueueFullEvents;
+    stats->MaxLatency = AdapterExtension->QueueStats[InstanceIdx].MaxLatency;
+    stats->BusyRequests = AdapterExtension->QueueStats[InstanceIdx].BusyRequests;
+    stats->MaxIoDelay = AdapterExtension->QueueStats[InstanceIdx].MaxStartIoDelay;
+    // We want max latency tracked since the last perfmon query.
+    AdapterExtension->QueueStats[InstanceIdx].MaxLatency = 0;
+    AdapterExtension->QueueStats[InstanceIdx].MaxStartIoDelay = 0;
 }
 
 WCHAR InstancePrefix[] = L"Adapter";
@@ -601,6 +607,10 @@ Copies the statistics for a scsi target to the given destination.
     stats->InFlightRequests = AdapterExtension->TargetStats[InstanceIdx].TotalRequests -
         AdapterExtension->TargetStats[InstanceIdx].CompletedRequests;
     stats->ResetRequests = AdapterExtension->TargetStats[InstanceIdx].ResetRequests;
+    stats->MaxLatency = AdapterExtension->TargetStats[InstanceIdx].MaxLatency;
+    stats->BusyRequests = AdapterExtension->TargetStats[InstanceIdx].BusyRequests;
+    // We want max latency tracked since the last perfmon query.
+    AdapterExtension->TargetStats[InstanceIdx].MaxLatency = 0;
 }
 
 WCHAR TARGETBASENAME[] = L"Target";

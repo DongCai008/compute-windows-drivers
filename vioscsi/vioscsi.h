@@ -20,10 +20,9 @@
 #include <scsiwmi.h>
 
 #include "osdep.h"
+#include "srbwrapper.h"
 #include "virtio_pci.h"
-#include "virtio_config.h"
 #include "VirtIO.h"
-#include "virtio_ring.h"
 
 typedef struct VirtIOBufferDescriptor VIO_SG, *PVIO_SG;
 
@@ -36,6 +35,7 @@ typedef struct VirtIOBufferDescriptor VIO_SG, *PVIO_SG;
 #define MAX_PHYS_SEGMENTS       16
 #endif
 
+#define VIOSCSI_POOL_TAG        'SoiV'
 #define VIRTIO_MAX_SG            (3+MAX_PHYS_SEGMENTS)
 
 #define SECTOR_SIZE             512
@@ -259,6 +259,9 @@ typedef struct _SRB_EXTENSION {
     vring_desc_alias     desc[VIRTIO_MAX_SG];
 #endif
     PROCESSOR_NUMBER      procNum;
+#ifdef ENABLE_WMI
+    ULONGLONG             startTsc;
+#endif
  } SRB_EXTENSION, * PSRB_EXTENSION;
 #pragma pack()
 
@@ -279,12 +282,18 @@ typedef struct {
     ULONGLONG SkippedKicks;
     ULONGLONG TotalInterrupts;
     ULONGLONG QueueFullEvents;
+    ULONGLONG MaxLatency;
+    ULONGLONG BusyRequests;
+    ULONGLONG LastStartIo;
+    ULONGLONG MaxStartIoDelay;
 } VIRTQUEUE_STATISTICS, *PVIRTQUEUE_STATISTICS;
 
 typedef struct {
     ULONGLONG TotalRequests;
     ULONGLONG CompletedRequests;
     ULONGLONG ResetRequests;
+    ULONGLONG MaxLatency;
+    ULONGLONG BusyRequests;
 } TARGET_STATISTICS, *PTARGET_STATISTICS;
 #define MAX_TARGET 256
 #endif
@@ -320,10 +329,23 @@ typedef struct _ADAPTER_EXTENSION {
     ULONG                 num_queues;
     UCHAR                 cpu_to_vq_map[MAX_CPU];
     ULONG                 perfFlags;
-
+    PGROUP_AFFINITY       pmsg_affinity;
     BOOLEAN               dpc_ok;
     STOR_DPC              dpc[MAX_CPU];
-    PSCSI_REQUEST_BLOCK   pending_snapshot_rq;
+
+    // SRB sent by agent. It's IOCTL_SCSI_MINIPORT with Control code
+    // SNAPSHOT_REQUESTED. Driver complete this srb when it got a snapshot
+    // request from backend.
+    PSRB_TYPE             srb_snapshot_requested;
+    // SRB sent by provider during commit. It's IOCTL_SCSI_MINIPORT with Control
+    // code SNAPSHOT_CAN_PROCEED. Driver complete this srb when it got an event
+    // notification from backend to indicate that the snapshot is finished in
+    // the backend, and IO can be resumed.
+    PSRB_TYPE             srb_snapshot_can_proceeed;
+    // Global SRB and extension for fast-failing snapshot requests. Will only be
+    // used in the interrupt routine so there is no risk of a data race.
+    SCSI_REQUEST_BLOCK snapshot_fail_srb;
+    SRB_EXTENSION snapshot_fail_extension;
 #ifdef ENABLE_WMI
     SCSI_WMILIB_CONTEXT   WmiLibContext;
     SCSI_WMILIB_CONTEXT   PdoWmiLibContext;

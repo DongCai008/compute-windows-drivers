@@ -24,7 +24,6 @@
 #endif
 
 VOID
-FORCEINLINE
 Lock(
     IN PVOID DeviceExtension,
     IN ULONG MessageID,
@@ -43,7 +42,6 @@ Lock(
 }
 
 VOID
-FORCEINLINE
 Unlock(
     IN PVOID DeviceExtension,
     IN ULONG MessageID,
@@ -68,23 +66,40 @@ SendSRB(
     BOOLEAN             result = FALSE;
     bool                notify = FALSE;
     STOR_LOCK_HANDLE    LockHandle = { 0 };
+#ifdef ENABLE_WMI
+    ULONGLONG           timeSinceLastStartIo;
+    PVIRTQUEUE_STATISTICS queueStats;
+#endif
 ENTER_FN();
     SET_VA_PA();
-    QueueNumber = adaptExt->cpu_to_vq_map[srbExt->procNum.Number];
+    QueueNumber = adaptExt->cpu_to_vq_map[srbExt->procNum.Number] + VIRTIO_SCSI_REQUEST_QUEUE_0;
     TRACE3(TRACE_LEVEL_INFORMATION, DRIVER_IO, "SrbInfo", "issued on", srbExt->procNum.Number,
         "group", srbExt->procNum.Group, "QueueNumber", QueueNumber);
 
     MessageId = QueueNumber + 1;
+#ifdef ENABLE_WMI
+    queueStats = &adaptExt->QueueStats[QueueNumber - VIRTIO_SCSI_REQUEST_QUEUE_0];
+    srbExt->startTsc = ReadTimeStampCounter();
+#endif
     Lock(DeviceExtension, MessageId, &LockHandle);
     if (CHECKFLAG(adaptExt->perfFlags, STOR_PERF_OPTIMIZE_FOR_COMPLETION_DURING_STARTIO)) {
         ProcessQueue(DeviceExtension, MessageId, FALSE);
     }
+#ifdef ENABLE_WMI
+    if (queueStats->LastStartIo != 0) {
+        timeSinceLastStartIo = srbExt->startTsc - queueStats->LastStartIo;
+        if (queueStats->MaxStartIoDelay < timeSinceLastStartIo) {
+            queueStats->MaxStartIoDelay = timeSinceLastStartIo;
+        }
+    }
+    queueStats->LastStartIo = srbExt->startTsc;
+#endif
     if (virtqueue_add_buf(adaptExt->vq[QueueNumber],
                      &srbExt->sg[0],
                      srbExt->out, srbExt->in,
                      &srbExt->cmd, va, pa) >= 0){
 #ifdef ENABLE_WMI
-        adaptExt->QueueStats[QueueNumber - VIRTIO_SCSI_REQUEST_QUEUE_0].TotalRequests++;
+        queueStats->TotalRequests++;
         adaptExt->TargetStats[SRB_TARGET_ID(Srb)].TotalRequests++;
 #endif
         result = TRUE;
@@ -92,7 +107,7 @@ ENTER_FN();
     }
     else {
 #ifdef ENABLE_WMI
-        adaptExt->QueueStats[QueueNumber - VIRTIO_SCSI_REQUEST_QUEUE_0].QueueFullEvents++;
+        queueStats->QueueFullEvents++;
 #endif
         TRACE1(TRACE_LEVEL_WARNING, DRIVER_IO, "Cant add packet to queue", "QueueNumber", QueueNumber);
     }
@@ -100,12 +115,12 @@ ENTER_FN();
     if (notify) {
         virtqueue_notify(adaptExt->vq[QueueNumber]);
 #ifdef ENABLE_WMI
-        adaptExt->QueueStats[QueueNumber - VIRTIO_SCSI_REQUEST_QUEUE_0].TotalKicks++;
+        queueStats->TotalKicks++;
 #endif
     }
     else {
 #ifdef ENABLE_WMI
-        adaptExt->QueueStats[QueueNumber - VIRTIO_SCSI_REQUEST_QUEUE_0].SkippedKicks++;
+        queueStats->SkippedKicks++;
 #endif
     }
     return result;
@@ -120,7 +135,7 @@ SynchronizedTMFRoutine(
 {
     PADAPTER_EXTENSION  adaptExt = (PADAPTER_EXTENSION)DeviceExtension;
     PSCSI_REQUEST_BLOCK Srb      = (PSCSI_REQUEST_BLOCK) Context;
-    PSRB_EXTENSION      srbExt        = (PSRB_EXTENSION)Srb->SrbExtension;
+    PSRB_EXTENSION      srbExt   = (PSRB_EXTENSION)Srb->SrbExtension;
     PVOID               va;
     ULONGLONG           pa;
 
@@ -147,6 +162,46 @@ SendTMF(
 {
 ENTER_FN();
     return StorPortSynchronizeAccess(DeviceExtension, SynchronizedTMFRoutine, (PVOID)Srb);
+EXIT_FN();
+}
+
+BOOLEAN
+SynchronizedVssControlRoutine(
+    IN PVOID DeviceExtension,
+    IN PVOID Context
+    )
+{
+    PADAPTER_EXTENSION  adaptExt = (PADAPTER_EXTENSION)DeviceExtension;
+    PSRB_TYPE           Srb      = (PSRB_TYPE)Context;
+    PSRB_EXTENSION      srbExt   = SRB_EXTENSION(Srb);
+    PVOID               va;
+    ULONGLONG           pa;
+
+ENTER_FN();
+    SET_VA_PA();
+    if (virtqueue_add_buf(adaptExt->vq[VIRTIO_SCSI_CONTROL_QUEUE],
+                     &srbExt->sg[0],
+                     srbExt->out, srbExt->in,
+                     &srbExt->cmd, va, pa) >= 0){
+        virtqueue_kick(adaptExt->vq[VIRTIO_SCSI_CONTROL_QUEUE]);
+        return TRUE;
+    }
+    Srb->SrbStatus = SRB_STATUS_BUSY;
+    StorPortBusy(DeviceExtension, adaptExt->queue_depth);
+EXIT_ERR();
+    return FALSE;
+}
+
+BOOLEAN
+SendVssControl(
+    IN PVOID DeviceExtension,
+    IN PSRB_TYPE Srb
+    )
+{
+ENTER_FN();
+    return StorPortSynchronizeAccess(DeviceExtension,
+                                     SynchronizedVssControlRoutine,
+                                     (PVOID)Srb);
 EXIT_FN();
 }
 
@@ -233,67 +288,81 @@ ReportDriverVersion(
     srbExt->sg[sgElement].length = sizeof(cmd->resp.google);
     sgElement++;
     srbExt->in = sgElement - srbExt->out;
-    StorPortPause(DeviceExtension, 60);
+
     if (!SendTMF(DeviceExtension, Srb)) {
-        StorPortResume(DeviceExtension);
         return FALSE;
     }
-    adaptExt->tmf_infly = TRUE;
     return TRUE;
 }
 
 BOOLEAN
-ProceedWithSnapshot(
-    IN PVOID DeviceExtension
+ReportSnapshotStatus(
+    IN PVOID DeviceExtension,
+    IN PSRB_TYPE Srb,
+    IN UCHAR Target,
+    IN UCHAR Lun,
+    IN u64 Status
     )
 {
+    PSRB_TYPE  workingSrb = NULL;
+    PSRB_EXTENSION srbExt = NULL;
     PADAPTER_EXTENSION    adaptExt = (PADAPTER_EXTENSION)DeviceExtension;
-    PSCSI_REQUEST_BLOCK   Srb = &adaptExt->tmf_cmd.Srb;
-    PSRB_EXTENSION        srbExt = adaptExt->tmf_cmd.SrbExtension;
-    VirtIOSCSICmd         *cmd = &srbExt->cmd;
-    ULONG                 fragLen;
-    ULONG                 sgElement;
-
+    BOOLEAN ignoreStorportSync = false;
     ENTER_FN();
     if (adaptExt->dump_mode) {
         return TRUE;
     }
+    if (!Srb) {
+        // If there is no Srb present, use the global structure in the device
+        // extension to allow fast failure.
+        workingSrb = (PSRB_TYPE) &adaptExt->snapshot_fail_srb;
+        srbExt = &adaptExt->snapshot_fail_extension;
 
-    // TODO(nataliep): re-think this logic as Feng pointed out.
-    // The tmf_inflight logic is too harsh here.
-    ASSERT(adaptExt->tmf_infly == FALSE);
-    Srb->SrbExtension = srbExt;
+        srbExt->Srb = (PSCSI_REQUEST_BLOCK) workingSrb;
+        ((PSCSI_REQUEST_BLOCK) workingSrb)->SrbExtension = srbExt;
+        ignoreStorportSync = true;
+    } else {
+        workingSrb = Srb;
+        srbExt = SRB_EXTENSION(workingSrb);
+    }
+
+    VirtIOSCSICmd         *cmd = &srbExt->cmd;
+    ULONG                 fragLen;
+    ULONG                 sgElement;
+
     memset((PVOID)cmd, 0, sizeof(VirtIOSCSICmd));
-    cmd->sc = Srb;
-    // TODO(nataliep): copy target and lun info back from the SRB that came from
-    // snapshot requestor (adaptExt->pending_snapshot_srb).
+    cmd->sc = workingSrb;
     cmd->req.google.lun[0] = 1;
-    cmd->req.google.lun[1] = 0;
+    cmd->req.google.lun[1] = Target;
     cmd->req.google.lun[2] = 0;
-    cmd->req.google.lun[3] = 0;
+    cmd->req.google.lun[3] = Lun;
+    cmd->req.google.lun[4] = 0;
+    cmd->req.google.lun[5] = 0;
+    cmd->req.google.lun[6] = 0;
+    cmd->req.google.lun[7] = 0;
+
     cmd->req.google.type = VIRTIO_SCSI_T_GOOGLE;
     cmd->req.google.subtype = VIRTIO_SCSI_T_GOOGLE_REPORT_SNAPSHOT_READY;
-    cmd->req.google.data = 0;  // TBD
+    cmd->req.google.data = Status;
 
     sgElement = 0;
     srbExt->sg[sgElement].physAddr =
-    StorPortGetPhysicalAddress(DeviceExtension, NULL, &cmd->req.tmf, &fragLen);
+        StorPortGetPhysicalAddress(
+            DeviceExtension, NULL, &cmd->req.tmf, &fragLen);
     srbExt->sg[sgElement].length = sizeof(cmd->req.google);
     sgElement++;
     srbExt->out = sgElement;
     srbExt->sg[sgElement].physAddr =
-    StorPortGetPhysicalAddress(DeviceExtension, NULL, &cmd->resp.tmf, &fragLen);
+        StorPortGetPhysicalAddress(
+            DeviceExtension, NULL, &cmd->resp.tmf, &fragLen);
     srbExt->sg[sgElement].length = sizeof(cmd->resp.google);
     sgElement++;
     srbExt->in = sgElement - srbExt->out;
-    StorPortPause(DeviceExtension, 60);
-    // TODO(nataliep): this block needs to be implemented correctly:
-    if (!SendTMF(DeviceExtension, Srb)) {
-        StorPortResume(DeviceExtension);
-        return FALSE;
+
+    if (ignoreStorportSync) {
+        return SynchronizedVssControlRoutine(DeviceExtension, workingSrb);
     }
-    adaptExt->tmf_infly = TRUE;
-    return TRUE;
+    return SendVssControl(DeviceExtension, workingSrb);
 }
 
 VOID
@@ -315,6 +384,10 @@ ENTER_FN();
             }
             adaptExt->vq[index] = NULL;
         }
+    }
+    if (adaptExt->pmsg_affinity != NULL) {
+        StorPortFreePool(DeviceExtension, adaptExt->pmsg_affinity);
+        adaptExt->pmsg_affinity = NULL;
     }
 EXIT_FN();
 }
