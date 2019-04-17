@@ -1,16 +1,25 @@
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;/*++
 ;
-; Copyright (c) 2010-2015 Red Hat Inc.
+;INX_COPYRIGHT_1
+;INX_COPYRIGHT_2
 ;
+;Module Name:
+;    vioser.inf
 ;
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;Abstract:
+;
+;Installation Notes:
+;    Using Devcon: Type "devcon install vioser.inf PCI\VEN_1AF4&DEV_1003&SUBSYS_0003_INX_SUBSYS_VENDOR_ID&REV_00" or
+;                       "devcon install vioser.inf PCI\VEN_1AF4&DEV_1043&SUBSYS_1100_INX_SUBSYS_VENDOR_ID&REV_01" to install
+;
+;--*/
 
 [Version]
 Signature="$WINDOWS NT$"
 Class=System
 ClassGuid={4d36e97d-e325-11ce-bfc1-08002be10318}
-Provider=%REDHAT%
-DriverVer=02/22/2010,6.0.1000.10000
+Provider=%VENDOR%
+DriverVer=01/01/2008,0.0.0.1 ; this line will be replaced with stampinf
 CatalogFile=vioser.cat
 DriverPackageType = PlugAndPlay
 DriverPackageDisplayName = %VirtioSerial.DeviceDesc%
@@ -22,6 +31,7 @@ VirtioSerial_Device_CoInstaller_CopyFiles = 11
 
 [SourceDisksFiles]
 vioser.sys  = 1,,
+WdfCoInstaller$KMDFCOINSTALLERVERSION$.dll=1 ; make sure the number matches with SourceDisksNames
 
 [SourceDisksNames]
 1 = %DiskId1%,,,""
@@ -31,18 +41,15 @@ vioser.sys  = 1,,
 ;*****************************************
 
 [Manufacturer]
-%REDHAT%=VirtioSerial,NT$ARCH$
+%VENDOR%=VirtioSerial,NT$ARCH$
 
 [VirtioSerial.NT$ARCH$]
 ;
-; Hw Id is PCI\VEN_1AF4&DEV_1003&SUBSYS_00031AF4
+; Hw Ids are PCI\VEN_1AF4&DEV_1003&SUBSYS_0003_INX_SUBSYS_VENDOR_ID&REV_00
+;            PCI\VEN_1AF4&DEV_1043&SUBSYS_1100_INX_SUBSYS_VENDOR_ID&REV_01
 ;
-%VirtioSerial.DeviceDesc%=VirtioSerial_Device, PCI\VEN_1AF4&DEV_1003&SUBSYS_00031AF4&REV_00
-
-; Decorated model section take precedence over undecorated
-; ones on XP and later.
-[VirtioSerial.NT$ARCH$]
-%VirtioSerial.DeviceDesc%=VirtioSerial_Device, PCI\VEN_1AF4&DEV_1003&SUBSYS_00031AF4&REV_00
+%VirtioSerial.DeviceDesc%=VirtioSerial_Device, PCI\VEN_1AF4&DEV_1003&SUBSYS_0003_INX_SUBSYS_VENDOR_ID&REV_00, PCI\VEN_1AF4&DEV_1003
+%VirtioSerial.DeviceDesc%=VirtioSerial_Device, PCI\VEN_1AF4&DEV_1043&SUBSYS_1100_INX_SUBSYS_VENDOR_ID&REV_01, PCI\VEN_1AF4&DEV_1043
 
 [VirtioSerial_Device.NT]
 CopyFiles=Drivers_Dir
@@ -85,9 +92,6 @@ HKR,,CoInstallers32,0x00010000, "WdfCoInstaller$KMDFCOINSTALLERVERSION$.dll,WdfC
 [VirtioSerial_Device_CoInstaller_CopyFiles]
 WdfCoInstaller$KMDFCOINSTALLERVERSION$.dll
 
-[SourceDisksFiles]
-WdfCoInstaller$KMDFCOINSTALLERVERSION$.dll=1 ; make sure the number matches with SourceDisksNames
-
 [VirtioSerial_Device.NT.Wdf]
 KmdfService =  VirtioSerial, VirtioSerial_wdfsect
 
@@ -95,7 +99,7 @@ KmdfService =  VirtioSerial, VirtioSerial_wdfsect
 KmdfLibraryVersion = $KMDFVERSION$
 
 [Strings]
-REDHAT = "Red Hat, Inc."
-DiskId1 = "VirtIO-Serial Installation Disk #1"
-VirtioSerial.DeviceDesc = "VirtIO-Serial Driver"
-VirtioSerial.ServiceDesc = "VirtIO-Serial Service"
+VENDOR = "INX_COMPANY"
+DiskId1 = "INX_PREFIX_VIRTIOVirtIO Serial Installation Disk #1"
+VirtioSerial.DeviceDesc = "INX_PREFIX_VIRTIOVirtIO Serial Driver"
+VirtioSerial.ServiceDesc = "INX_PREFIX_VIRTIOVirtIO Serial Service"

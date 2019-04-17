@@ -1,19 +1,34 @@
-/**********************************************************************
- * Copyright (c) 2008-2015 Red Hat, Inc.
- *
- * File: ParaNdis-Oid.c
- *
+/*
  * This file contains NDIS5.X implementation of
  * OID-related adapter driver procedures
  *
- * This work is licensed under the terms of the GNU GPL, version 2.  See
- * the COPYING file in the top-level directory.
+ * Copyright (c) 2008-2017 Red Hat, Inc.
  *
-**********************************************************************/
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met :
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and / or other materials provided with the distribution.
+ * 3. Neither the names of the copyright holders nor the names of their contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.IN NO EVENT SHALL THE COPYRIGHT HOLDERS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
 #include "ParaNdis5.h"
 #include "ParaNdis-Oid.h"
-
-#if defined(NDIS51_MINIPORT) || defined(NDIS50_MINIPORT)
 
 #ifdef WPP_EVENT_TRACING
 #include "ParaNdis5-Oid.tmh"
@@ -251,7 +266,6 @@ NDIS_STATUS ParaNdis5_QueryOID(IN NDIS_HANDLE MiniportAdapterContext,
                                     OUT PULONG BytesNeeded)
 {
     NDIS_STATUS  status = NDIS_STATUS_NOT_SUPPORTED;
-    int debugLevel;
     tOidWhatToDo Rules;
     PARANDIS_ADAPTER *pContext = (PARANDIS_ADAPTER *)MiniportAdapterContext;
     tOidDesc _oid;
@@ -342,11 +356,12 @@ NDIS_STATUS ParaNdis5_SetOID(IN NDIS_HANDLE MiniportAdapterContext,
 
 static void OnSetPowerWorkItem(NDIS_WORK_ITEM * pWorkItem, PVOID  Context)
 {
+    NDIS_STATUS status = NDIS_STATUS_SUCCESS;
     tPowerWorkItem *pwi = (tPowerWorkItem *)pWorkItem;
     PARANDIS_ADAPTER *pContext = pwi->pContext;
     if (pwi->state == NetDeviceStateD0)
     {
-        ParaNdis_PowerOn(pContext);
+        status = ParaNdis_PowerOn(pContext);
     }
     else
     {
@@ -354,7 +369,7 @@ static void OnSetPowerWorkItem(NDIS_WORK_ITEM * pWorkItem, PVOID  Context)
     }
     NdisFreeMemory(pwi, 0, 0);
     ParaNdis_DebugHistory(pContext, hopOidRequest, NULL, OID_PNP_SET_POWER, 0, 2);
-    NdisMSetInformationComplete(pContext->MiniportHandle, NDIS_STATUS_SUCCESS);
+    NdisMSetInformationComplete(pContext->MiniportHandle, status);
 }
 
 /**********************************************************
@@ -749,7 +764,6 @@ NDIS_STATUS CreateOffloadInfo5ForQuery(
 NDIS_STATUS OnOidSetNdis5Offload(PARANDIS_ADAPTER *pContext, tOidDesc *pOid)
 {
     NDIS_STATUS status;
-    tOffloadSettings saveOffload = pContext->Offload;
     status = ParseOffload(pContext, (NDIS_TASK_OFFLOAD_HEADER *)pOid->InformationBuffer,
         pOid->InformationBufferLength, TRUE, "SET", FALSE);
     if (status == STATUS_SUCCESS)
@@ -769,6 +783,3 @@ NDIS_STATUS OnOidSetNdis5Offload(PARANDIS_ADAPTER *pContext, tOidDesc *pOid)
     }
     return status;
 }
-
-
-#endif //defined(NDIS51_MINIPORT) || defined(NDIS50_MINIPORT)

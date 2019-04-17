@@ -1,55 +1,33 @@
-#include "utils.h"
-#include "service.h"
-#include "strsafe.h"
+#include "stdafx.h"
 
 extern LPWSTR ServiceName;
 extern LPWSTR DisplayName;
 
 extern CService srvc;
 
-static struct ErrEntry {
-    int code;
-    const char* msg;
-} ErrList[] = {
-    { 0,    "No error" },
-    { 1055, "The service database is locked." },
-    { 1056, "An instance of the service is already running." },
-    { 1060, "The service does not exist as an installed service." },
-    { 1061, "The service cannot accept control messages at this time." },
-    { 1062, "The service has not been started." },
-    { 1063, "The service process could not connect to the service controller." },
-    { 1064, "An exception occurred in the service when handling the control request." },
-    { 1065, "The database specified does not exist." },
-    { 1066, "The service has returned a service-specific error code." },
-    { 1067, "The process terminated unexpectedly." },
-    { 1068, "The dependency service or group failed to start." },
-    { 1069, "The service did not start due to a logon failure." },
-    { 1070, "After starting, the service hung in a start-pending state." },
-    { 1071, "The specified service database lock is invalid." },
-    { 1072, "The service marked for deletion." },
-    { 1073, "The service already exists." },
-    { 1078, "The name is already in use as either a service name or a service display name." },
-};
-
-const int nErrList = sizeof(ErrList) / sizeof(ErrEntry);
-
 void ErrorHandler(char *s, int err)
 {
     printf("Failed. Error %d ", err );
-    int i;
-    for (i = 0; i < nErrList; ++i) {
-        if (ErrList[i].code == err) {
-            printf("%s\n", ErrList[i].msg);
-            break;
-        }
-    }
-    if (i == nErrList) {
+
+    LPTSTR lpMsgBuf;
+    if (FormatMessage(
+        FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+        NULL,
+        err,
+        MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+        (LPTSTR)&lpMsgBuf,
+        0, NULL) > 0) {
+        _tprintf(L"%s\n", lpMsgBuf);
+        LocalFree(lpMsgBuf);
+    } else {
         printf("unknown error\n");
     }
 
-    FILE* pLog = fopen("balloon.log","a");
-    fprintf(pLog, "%s failed, error code = %d\n",s , err);
-    fclose(pLog);
+    FILE* pLog;
+    if (fopen_s(&pLog, "balloon.log", "a") == 0 && pLog) {
+        fprintf(pLog, "%s failed, error code = %d\n", s, err);
+        fclose(pLog);
+    }
 
     ExitProcess(err);
 }
@@ -57,9 +35,11 @@ void ErrorHandler(char *s, int err)
 void PrintMessage(char *s)
 {
 #ifdef DBG
-    FILE* pLog = fopen("balloon.log", "a");
-    fprintf(pLog, "%s\n", s);
-    fclose(pLog);
+    FILE* pLog;
+    if (fopen_s(&pLog, "balloon.log", "a") == 0) {
+        fprintf(pLog, "%s\n", s);
+        fclose(pLog);
+    }
 #endif
 }
 
@@ -247,7 +227,7 @@ BOOL ServiceControl(int ctrl)
 {
     SC_HANDLE service;
     SC_HANDLE scm;
-    BOOL res;
+    BOOL res = TRUE;
     SERVICE_STATUS status;
 
     scm = OpenSCManager(NULL, NULL, SC_MANAGER_ALL_ACCESS);
@@ -296,16 +276,19 @@ BOOL GetConfiguration()
     }
 
     buffer = (LPQUERY_SERVICE_CONFIG)LocalAlloc(LPTR, 4096);
+    if (!buffer) {
+        ErrorHandler("LocalAlloc", GetLastError());
+    }
     res = QueryServiceConfig(service, buffer, 4096, &sizeNeeded);
     if (!res) {
         ErrorHandler("QueryServiceConfig", GetLastError());
     }
 
-    printf("Service name:\t%s\n", buffer->lpDisplayName);
+    printf("Service name:\t%S\n", buffer->lpDisplayName);
     printf("Service type:\t%d\n", buffer->dwServiceType);
     printf("Start type:\t%d\n",buffer->dwStartType);
-    printf("Start name:\t%s\n",buffer->lpServiceStartName);
-    printf("Path:\t\t%s\n",buffer->lpBinaryPathName);
+    printf("Start name:\t%S\n",buffer->lpServiceStartName);
+    printf("Path:\t\t%S\n",buffer->lpBinaryPathName);
 
     LocalFree(buffer);
 

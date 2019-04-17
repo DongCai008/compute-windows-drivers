@@ -1,16 +1,37 @@
-/**********************************************************************
- * Copyright (c) 2008-2015 Red Hat, Inc.
- *
- * File: sw-offload.c
- *
+/*
  * This file contains SW Implementation of checksum computation for IP,TCP,UDP
  *
- * This work is licensed under the terms of the GNU GPL, version 2.  See
- * the COPYING file in the top-level directory.
+ * Copyright (c) 2008-2017 Red Hat, Inc.
  *
-**********************************************************************/
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met :
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and / or other materials provided with the distribution.
+ * 3. Neither the names of the copyright holders nor the names of their contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.IN NO EVENT SHALL THE COPYRIGHT HOLDERS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
 #include "ndis56common.h"
 #include "kdebugprint.h"
+#include "Trace.h"
+#ifdef NETKVM_WPP_ENABLED
+#include "sw-offload.tmh"
+#endif
 
 // till IP header size is 8 bit
 #define MAX_SUPPORTED_IPV6_HEADERS  (256 - 4)
@@ -19,7 +40,7 @@
 typedef struct _tagIPv6ExtHeader {
     UCHAR       ip6ext_next_header;     // next header type
     UCHAR       ip6ext_hdr_len;         // length of this header in 8 bytes unit, not including first 8 bytes
-    USHORT      options;                //
+    USHORT      options;                // 
 } IPv6ExtHeader;
 
 // IP Pseudo Header RFC 768
@@ -72,9 +93,9 @@ typedef struct _tagIP6_TYPE2_ROUTING_HEADER
 
 #define IP6_HEADER_VERSION(pHeader)     (((pHeader)->ip6_ver_tc & 0xF0) >> 4)
 
-#define ETH_GET_VLAN_HDR(ethHdr)        ((PVLAN_HEADER) RtlOffsetToPointer(ethHdr, ETH_PRIORITY_HEADER_OFFSET))
-#define VLAN_GET_USER_PRIORITY(vlanHdr) ( (((PUCHAR)(vlanHdr))[2] & 0xE0) >> 5 )
-#define VLAN_GET_VLAN_ID(vlanHdr)       ( ((USHORT) (((PUCHAR)(vlanHdr))[2] & 0x0F) << 8) | ( ((PUCHAR)(vlanHdr))[3] ) )
+#define ETH_GET_VLAN_HDR(ethHdr)        ((PVLAN_HEADER) RtlOffsetToPointer(ethHdr, ETH_HEADER_SIZE))
+#define VLAN_GET_USER_PRIORITY(vlanHdr) ( (((PUCHAR)(vlanHdr))[0] & 0xE0) >> 5 )
+#define VLAN_GET_VLAN_ID(vlanHdr)       ( ((USHORT) (((PUCHAR)(vlanHdr))[0] & 0x0F) << 8) | ( ((PUCHAR)(vlanHdr))[1] ) )
 
 #define ETH_PROTO_IP4 (0x0800)
 #define ETH_PROTO_IP6 (0x86DD)
@@ -85,25 +106,50 @@ typedef struct _tagIP6_TYPE2_ROUTING_HEADER
 #define IP6_HDR_ESP               (50)
 #define IP6_HDR_AUTHENTICATION    (51)
 #define IP6_HDR_NONE              (59)
-#define IP6_HDR_DESTINATON        (60)
+#define IP6_HDR_DESTINATION       (60)
 #define IP6_HDR_MOBILITY          (135)
 
 #define IP6_EXT_HDR_GRANULARITY   (8)
 
-static UINT32 RawCheckSumCalculator(PVOID buffer, ULONG len)
+static UINT_PTR RawCheckSumCalculator(PVOID buffer, ULONG len)
 {
-    UINT32 val = 0;
-    PUSHORT pus = (PUSHORT)buffer;
+    UINT_PTR val = 0;
+    PUCHAR ptr = (PUCHAR)buffer;
+#ifdef _WIN64
+    ULONG count = len >> 2;
+    while (count--) {
+        val += *(PUINT32)ptr;
+        ptr += 4;
+    }
+    if (len & 2) {
+        val += *(PUINT16)ptr;
+        ptr += 2;
+    }
+#else
     ULONG count = len >> 1;
-    while (count--) val += *pus++;
-    if (len & 1) val += (USHORT)*(PUCHAR)pus;
+    while (count--) {
+        val += *(PUINT16)ptr;
+        ptr += 2;
+    }
+#endif
+    if (len & 1) {
+        val += *ptr;
+    }
     return val;
 }
 
-static __inline USHORT RawCheckSumFinalize(UINT32 val)
+static __inline USHORT RawCheckSumFinalize(UINT_PTR sum)
 {
-    val = (((val >> 16) | (val << 16)) + val) >> 16;
-    return (USHORT)~val;
+    UINT32 sum32;
+    UINT16 sum16;
+
+#ifdef _WIN64
+    sum32 = (((sum >> 32) | (sum << 32)) + sum) >> 32;
+#else
+    sum32 = sum;
+#endif
+    sum16 = (((sum32 >> 16) | (sum32 << 16)) + sum32) >> 16;
+    return ~sum16;
 }
 
 static __inline USHORT CheckSumCalculatorFlat(PVOID buffer, ULONG len)
@@ -115,7 +161,7 @@ static __inline USHORT CheckSumCalculator(tCompletePhysicalAddress *pDataPages, 
 {
     tCompletePhysicalAddress *pCurrentPage = &pDataPages[0];
     ULONG ulCurrPageOffset = 0;
-    UINT32 u32RawCSum = 0;
+    UINT_PTR uRawCSum = 0;
 
     while(ulStartOffset > 0)
     {
@@ -132,13 +178,13 @@ static __inline USHORT CheckSumCalculator(tCompletePhysicalAddress *pDataPages, 
         PVOID pCurrentPageDataStart = RtlOffsetToPointer(pCurrentPage->Virtual, ulCurrPageOffset);
         ULONG ulCurrentPageDataLength = min(len, pCurrentPage->size - ulCurrPageOffset);
 
-        u32RawCSum += RawCheckSumCalculator(pCurrentPageDataStart, ulCurrentPageDataLength);
+        uRawCSum += RawCheckSumCalculator(pCurrentPageDataStart, ulCurrentPageDataLength);
         pCurrentPage++;
         ulCurrPageOffset = 0;
         len -= ulCurrentPageDataLength;
     }
 
-    return RawCheckSumFinalize(u32RawCSum);
+    return RawCheckSumFinalize(uRawCSum);
 }
 
 
@@ -169,7 +215,7 @@ ProcessTCPHeader(tTcpIpPacketParsingResult _res, PVOID pIpHeader, ULONG len, USH
     }
     else
     {
-        DPrintf(2, ("tcp: %d < min headers %d\n", len, tcpipDataAt));
+        DPrintf(2, "tcp: %d < min headers %d\n", len, tcpipDataAt);
         res.xxpFull = FALSE;
         res.xxpStatus = ppresXxpIncomplete;
     }
@@ -190,7 +236,7 @@ ProcessUDPHeader(tTcpIpPacketParsingResult _res, PVOID pIpHeader, ULONG len, USH
         res.xxpStatus = ppresXxpKnown;
         res.xxpFull = TRUE;
         // may be full or not, but the datagram length is known
-        DPrintf(2, ("udp: len %d, datagramLength %d\n", len, datagramLength));
+        DPrintf(2, "udp: len %d, datagramLength %d\n", len, datagramLength);
     }
     else
     {
@@ -216,7 +262,6 @@ QualifyIpPacket(IPHeader *pIpHeader, ULONG len, BOOLEAN verifyLength)
     UCHAR  ip_version = (ver_len & 0xF0) >> 4;
     USHORT ipHeaderSize = 0;
     USHORT fullLength = 0;
-    res.value = 0;
 
     if (ip_version == 4)
     {
@@ -227,8 +272,8 @@ QualifyIpPacket(IPHeader *pIpHeader, ULONG len, BOOLEAN verifyLength)
         }
         ipHeaderSize = (ver_len & 0xF) << 2;
         fullLength = swap_short(pIpHeader->v4.ip_length);
-        DPrintf(3, ("ip_version %d, ipHeaderSize %d, protocol %d, iplen %d, L2 payload length %d\n",
-            ip_version, ipHeaderSize, pIpHeader->v4.ip_protocol, fullLength, len));
+        DPrintf(3, "ip_version %d, ipHeaderSize %d, protocol %d, iplen %d, L2 payload length %d\n",
+            ip_version, ipHeaderSize, pIpHeader->v4.ip_protocol, fullLength, len);
 
         res.ipStatus = (ipHeaderSize >= sizeof(IPv4Header)) ? ppresIPV4 : ppresNotIP;
         if (res.ipStatus == ppresNotIP)
@@ -238,8 +283,8 @@ QualifyIpPacket(IPHeader *pIpHeader, ULONG len, BOOLEAN verifyLength)
 
         if (ipHeaderSize >= fullLength || ( verifyLength && len < fullLength))
         {
-            DPrintf(2, ("[%s] - truncated packet - ip_version %d, ipHeaderSize %d, protocol %d, iplen %d, L2 payload length %d, verify = %s\n", __FUNCTION__,
-                ip_version, ipHeaderSize, pIpHeader->v4.ip_protocol, fullLength, len, (verifyLength ? "true" : "false")));
+            DPrintf(2, "[%s] - truncated packet - ip_version %d, ipHeaderSize %d, protocol %d, iplen %d, L2 payload length %d, verify = %s\n", __FUNCTION__,
+                ip_version, ipHeaderSize, pIpHeader->v4.ip_protocol, fullLength, len, (verifyLength ? "true" : "false"));
             res.ipCheckSum = ppresIPTooShort;
             return res;
         }
@@ -307,7 +352,7 @@ QualifyIpPacket(IPHeader *pIpHeader, ULONG len, BOOLEAN verifyLength)
                     }
                     else
                     {
-                        DPrintf(0, ("[%s] ERROR: Break in the middle of ext. headers(len %d, hdr > %d)\n", __FUNCTION__, len, ipHeaderSize));
+                        DPrintf(0, "[%s] ERROR: Break in the middle of ext. headers(len %d, hdr > %d)\n", __FUNCTION__, len, ipHeaderSize);
                         res.ipStatus = ppresNotIP;
                         bParsingDone = TRUE;
                     }
@@ -321,19 +366,24 @@ QualifyIpPacket(IPHeader *pIpHeader, ULONG len, BOOLEAN verifyLength)
             if (bParsingDone)
                 break;
         }
-        if (ipHeaderSize <= MAX_SUPPORTED_IPV6_HEADERS)
+        if ((ipHeaderSize <= MAX_SUPPORTED_IPV6_HEADERS) && (ipHeaderSize <= fullLength))
         {
-            DPrintf(3, ("ip_version %d, ipHeaderSize %d, protocol %d, iplen %d\n",
-                ip_version, ipHeaderSize, nextHeader, fullLength));
+            DPrintf(3, "ip_version %d, ipHeaderSize %d, protocol %d, iplen %d\n",
+                ip_version, ipHeaderSize, nextHeader, fullLength);
             res.ipHeaderSize = ipHeaderSize;
         }
         else
         {
-            DPrintf(0, ("[%s] ERROR: IP chain is too large (%d)\n", __FUNCTION__, ipHeaderSize));
+            DPrintf(0, "[%s] ERROR: IP chain is too large (%d)\n", __FUNCTION__, ipHeaderSize);
             res.ipStatus = ppresNotIP;
         }
     }
-    
+    else
+    {
+        res.ipStatus = ppresNotIP;
+        return res;
+    }
+
     if (res.ipStatus == ppresIPV4)
     {
         res.ipHeaderSize = ipHeaderSize;
@@ -366,7 +416,7 @@ static __inline USHORT GetXxpHeaderAndPayloadLen(IPHeader *pIpHeader, tTcpIpPack
     {
         USHORT headerLength = IP_HEADER_LENGTH(&pIpHeader->v4);
         USHORT len = swap_short(pIpHeader->v4.ip_length);
-        return len - headerLength;          
+        return len - headerLength;
     }
     if (res.ipStatus == ppresIPV6)
     {
@@ -418,6 +468,11 @@ static __inline USHORT CalculateIpPseudoHeaderChecksum(IPHeader *pIpHeader,
     if (res.ipStatus == ppresIPV6)
         return CalculateIpv6PseudoHeaderChecksum(&pIpHeader->v6, headerAndPayloadLen);
     return 0;
+}
+
+USHORT CheckSumCalculator(PVOID buffer, ULONG len)
+{
+        return CheckSumCalculatorFlat(buffer, len);
 }
 
 static __inline BOOLEAN
@@ -643,12 +698,12 @@ static __inline VOID PrintOutParsingResult(
     int level,
     LPCSTR procname)
 {
-    DPrintf(level, ("[%s] %s packet IPCS %s%s, checksum %s%s\n", procname,
+    DPrintf(level, "[%s] %s packet IPCS %s%s, checksum %s%s\n", procname,
         GetPacketCase(res),
         GetIPCSCase(res),
         res.fixedIpCS ? "(fixed)" : "",
         GetXxpCSCase(res),
-        res.fixedXxpCS ? "(fixed)" : ""));
+        res.fixedXxpCS ? "(fixed)" : "");
 }
 
 tTcpIpPacketParsingResult ParaNdis_CheckSumVerify(
@@ -728,8 +783,7 @@ VOID AnalyzeL3Proto(
 }
 
 static
-BOOLEAN AnalyzeL2Hdr(
-    PNET_PACKET_INFO packetInfo)
+BOOLEAN AnalyzeL2Hdr(PNET_PACKET_INFO packetInfo)
 {
     PETH_HEADER dataBuffer = (PETH_HEADER) packetInfo->headersBuffer;
 
@@ -740,17 +794,14 @@ BOOLEAN AnalyzeL2Hdr(
 
     if (ETH_IS_BROADCAST(dataBuffer))
     {
-        #pragma warning(suppress: 4463)
         packetInfo->isBroadcast = TRUE;
     }
     else if (ETH_IS_MULTICAST(dataBuffer))
     {
-        #pragma warning(suppress: 4463)
         packetInfo->isMulticast = TRUE;
     }
     else
     {
-        #pragma warning(suppress: 4463)
         packetInfo->isUnicast = TRUE;
     }
 
@@ -761,7 +812,6 @@ BOOLEAN AnalyzeL2Hdr(
         if(packetInfo->dataLength < ETH_HEADER_SIZE + ETH_PRIORITY_HEADER_SIZE)
             return FALSE;
 
-        #pragma warning(suppress: 4463)
         packetInfo->hasVlanHeader     = TRUE;
         packetInfo->Vlan.UserPriority = VLAN_GET_USER_PRIORITY(vlanHdr);
         packetInfo->Vlan.VlanId       = VLAN_GET_VLAN_ID(vlanHdr);
@@ -893,7 +943,7 @@ BOOLEAN AnalyzeIP6Hdr(
             __fallthrough;
         case IP6_HDR_FRAGMENT:
             return TRUE;
-        case IP6_HDR_DESTINATON:
+        case IP6_HDR_DESTINATION:
             {
                 IPV6_ADDRESS *homeAddr = NULL;
                 ULONG destHdrOffset = *ip6HdrLength;
@@ -1026,8 +1076,8 @@ ULONG ParaNdis_StripVlanHeaderMoveHead(PNET_PACKET_INFO packetInfo)
 {
     PUINT32 pData = (PUINT32) packetInfo->headersBuffer;
 
-    ASSERT(packetInfo->hasVlanHeader);
-    ASSERT(packetInfo->L2HdrLen == ETH_HEADER_SIZE + ETH_PRIORITY_HEADER_SIZE);
+    NETKVM_ASSERT(packetInfo->hasVlanHeader);
+    NETKVM_ASSERT(packetInfo->L2HdrLen == ETH_HEADER_SIZE + ETH_PRIORITY_HEADER_SIZE);
 
     pData[3] = pData[2];
     pData[2] = pData[1];

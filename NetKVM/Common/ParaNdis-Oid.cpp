@@ -1,16 +1,37 @@
-/**********************************************************************
- * Copyright (c) 2008-2015 Red Hat, Inc.
- *
- * File: ParaNdis6-Oid.c
- *
+/*
  * This file contains NDIS OID support procedures, common for NDIS5 and NDIS6
  *
- * This work is licensed under the terms of the GNU GPL, version 2.  See
- * the COPYING file in the top-level directory.
+ * Copyright (c) 2008-2017 Red Hat, Inc.
  *
-**********************************************************************/
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met :
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and / or other materials provided with the distribution.
+ * 3. Neither the names of the copyright holders nor the names of their contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.IN NO EVENT SHALL THE COPYRIGHT HOLDERS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
 #include "ParaNdis-Oid.h"
 #include "kdebugprint.h"
+#include "Trace.h"
+#ifdef NETKVM_WPP_ENABLED
+#include "ParaNdis-Oid.tmh"
+#endif
 
 static const char VendorName[] = "Red Hat";
 
@@ -108,7 +129,7 @@ NDIS_STATUS ParaNdis_OnSetPacketFilter(PARANDIS_ADAPTER *pContext, tOidDesc *pOi
     if (status == NDIS_STATUS_SUCCESS)
     {
         pContext->PacketFilter = newValue;
-        DPrintf(1, ("[%s] PACKET FILTER SET TO %x\n", __FUNCTION__, pContext->PacketFilter));
+        DPrintf(1, "[%s] PACKET FILTER SET TO %x\n", __FUNCTION__, pContext->PacketFilter);
         ParaNdis_UpdateDeviceFilters(pContext);
     }
     return status;
@@ -215,7 +236,7 @@ NDIS_STATUS ParaNdis_OidQueryCommon(PARANDIS_ADAPTER *pContext, tOidDesc *pOid)
         USHORT                                  us;
         NDIS_PNP_CAPABILITIES                   PMCaps;
     } u;
-#define SETINFO(field, value) pInfo = &u.field; ulSize = sizeof(u.field); u.field = (value)
+#define SETINFO(field, value) pInfo = &u.##field; ulSize = sizeof(u.##field); u.##field = (value)
     switch (pOid->Oid)
     {
     case OID_GEN_SUPPORTED_LIST:
@@ -272,7 +293,7 @@ NDIS_STATUS ParaNdis_OidQueryCommon(PARANDIS_ADAPTER *pContext, tOidDesc *pOid)
         {
             totalFreeTxDescriptors += pContext->pPathBundles[i].txPath.GetFreeTXDescriptors();
         }
-        SETINFO(ul, pContext->maxFreeTxDescriptors - totalFreeTxDescriptors);
+        SETINFO(ul, (pContext->nPathBundles * pContext->maxFreeTxDescriptors) - totalFreeTxDescriptors);
         break;
     }
     case OID_GEN_VENDOR_ID:
@@ -379,7 +400,7 @@ NDIS_STATUS ParaNdis_OidQueryCommon(PARANDIS_ADAPTER *pContext, tOidDesc *pOid)
             pContext->Statistics.ifHCInUcastPkts +
             pContext->Statistics.ifHCInMulticastPkts +
             pContext->Statistics.ifHCInBroadcastPkts);
-        DPrintf(4, ("[%s] Total frames %I64u\n", __FUNCTION__, u.ul64));
+        DPrintf(4, "[%s] Total frames %I64u\n", __FUNCTION__, u.ul64);
         break;
     case OID_GEN_XMIT_ERROR:
         SETINFO(ul64, pContext->Statistics.ifOutErrors );
@@ -479,6 +500,7 @@ const char *ParaNdis_OidName(NDIS_OID oid)
     MAKECASE(OID_GEN_MAXIMUM_SEND_PACKETS)
     MAKECASE(OID_GEN_VENDOR_DRIVER_VERSION)
     MAKECASE(OID_GEN_SUPPORTED_GUIDS)
+    MAKECASE(OID_GEN_NETWORK_LAYER_ADDRESSES)
     MAKECASE(OID_GEN_TRANSPORT_HEADER_OFFSET)
     MAKECASE(OID_GEN_MEDIA_CAPABILITIES)
     MAKECASE(OID_GEN_PHYSICAL_MEDIUM)
@@ -578,6 +600,93 @@ MAKECASE(OID_TCP_TASK_IPSEC_OFFLOAD_V2_UPDATE_SA)
 }
 
 /**********************************************************
+Common handler of IP-address assignment (DHCP finish)
+***********************************************************/
+NDIS_STATUS ParaNdis_OnOidSetNetworkAddresses(PARANDIS_ADAPTER *pContext, tOidDesc *pOid)
+{
+    UINT i, j, ipV4Count = 0, ipV6Count = 0;
+
+    NETWORK_ADDRESS_LIST *pnal = (NETWORK_ADDRESS_LIST *)pOid->InformationBuffer;
+    if (sizeof(NETWORK_ADDRESS_LIST) < pOid->InformationBufferLength)
+    {
+        NETWORK_ADDRESS * addr;
+        PUCHAR ptr = (PUCHAR)(&pnal->Address[0]);
+
+        for (i = 0; i < (UINT)pnal->AddressCount; i++)
+        {
+            addr = (NETWORK_ADDRESS *)ptr;
+            if (addr->AddressType == NDIS_PROTOCOL_ID_TCP_IP)
+            {
+                ipV4Count++;
+            } else if (addr->AddressType == NDIS_PROTOCOL_ID_IP6)
+            {
+                ipV6Count++;
+            }
+            ptr += RTL_FIELD_SIZE(NETWORK_ADDRESS, AddressLength) + RTL_FIELD_SIZE(NETWORK_ADDRESS, AddressType);
+            ptr += addr->AddressLength;
+        }
+        /*
+         *   As it was observed on Windows, NETWORK_ADDRESS_LIST contains either V4 or V6 Addresses
+         *   and thus if we get IPV4 addresses we only change the IPV4 packets, the same applies to IPV6
+         */
+        if (ipV4Count)
+        {
+            pContext->guestAnnouncePackets.DestroyIPV4NBLs();
+        }
+        if (ipV6Count)
+        {
+            pContext->guestAnnouncePackets.DestroyIPV6NBLs();
+        }
+        PUCHAR p = (PUCHAR)(&pnal->Address[0]);
+        DPrintf(2, "Received %d addresses, type %d\n", pnal->AddressCount, pnal->AddressType);
+        for (i = 0; i < (UINT)pnal->AddressCount; ++i)
+        {
+            NETWORK_ADDRESS *pna = (NETWORK_ADDRESS *)p;
+            ULONG ulBufSize = pna->AddressLength * 2 + 1;
+            if (pna->AddressLength == sizeof(NETWORK_ADDRESS_IP)
+                && pnal->AddressType == NDIS_PROTOCOL_ID_TCP_IP)
+            {
+                PNETWORK_ADDRESS_IP pIP = (PNETWORK_ADDRESS_IP)pna->Address;
+                pContext->guestAnnouncePackets.CreateNBL(pIP->in_addr);
+                DPrintf(0, "Received IP address %d.%d.%d.%d\n",
+                    (pIP->in_addr >> 0) & 0xff,
+                    (pIP->in_addr >> 8) & 0xff,
+                    (pIP->in_addr >> 16) & 0xff,
+                    (pIP->in_addr >> 24) & 0xff);
+            } else
+            {
+                if (pna->AddressLength == sizeof(NETWORK_ADDRESS_IP6)
+                    && pnal->AddressType == NDIS_PROTOCOL_ID_IP6)
+                {
+                    PNETWORK_ADDRESS_IP6 pIP = (PNETWORK_ADDRESS_IP6)pna->Address;
+                    pContext->guestAnnouncePackets.CreateNBL(pIP->sin6_addr);
+                }
+                PUCHAR TempString = (ulBufSize < 100) ? (PUCHAR) ParaNdis_AllocateMemory(pContext, ulBufSize) : NULL;
+                if (TempString)
+                {
+                    NdisZeroMemory(TempString, ulBufSize);
+                    for (j = 0; j < pna->AddressLength; ++j)
+                    {
+                        UCHAR digit;
+                        digit = pna->Address[j] >> 4;
+                        TempString[j * 2] = hexdigit(digit);
+                        digit = pna->Address[j] & 0xf;
+                        TempString[j * 2 + 1] = hexdigit(digit);
+                    }
+                }
+                DPrintf(0, "address %d, type %d, len %d (%s)\n",
+                    i, pna->AddressType, pna->AddressLength, TempString ? (PCHAR) TempString : "do not know");
+                if (TempString) NdisFreeMemory(TempString, 0, 0);
+            }
+            p += RTL_FIELD_SIZE(NETWORK_ADDRESS, AddressLength) + RTL_FIELD_SIZE(NETWORK_ADDRESS, AddressType);
+            p += pna->AddressLength;
+        }
+    }
+    *pOid->pBytesRead = pOid->InformationBufferLength;
+    return NDIS_STATUS_SUCCESS;
+}
+
+/**********************************************************
 Checker of valid size of provided wake-up patter
 Return value: SUCCESS or kind of failure where the buffer is wrong
 ***********************************************************/
@@ -594,9 +703,9 @@ static NDIS_STATUS ValidateWakeupPattern(PNDIS_PM_PACKET_PATTERN p, PULONG pVali
         ULONG ul = p->PatternOffset + p->PatternSize;
         if (*pValidSize >= ul) status = NDIS_STATUS_SUCCESS;
         *pValidSize = ul;
-        DPrintf(2, ("[%s] pattern of %d at %d, mask %d (%s)\n",
+        DPrintf(2, "[%s] pattern of %d at %d, mask %d (%s)\n",
             __FUNCTION__, p->PatternSize, p->PatternOffset, p->MaskSize,
-            status == NDIS_STATUS_SUCCESS ? "OK" : "Fail"));
+            status == NDIS_STATUS_SUCCESS ? "OK" : "Fail");
     }
     return status;
 }
@@ -659,7 +768,7 @@ NDIS_STATUS ParaNdis_OnEnableWakeup(PARANDIS_ADAPTER *pContext, tOidDesc *pOid)
     NDIS_STATUS status = ParaNdis_OidSetCopy(pOid, &pContext->ulEnableWakeup, sizeof(pContext->ulEnableWakeup));
     if (status == NDIS_STATUS_SUCCESS)
     {
-        DPrintf(0, ("[%s] new value %lX\n", __FUNCTION__, pContext->ulEnableWakeup));
+        DPrintf(0, "[%s] new value %lX\n", __FUNCTION__, pContext->ulEnableWakeup);
     }
     return status;
 }
@@ -679,7 +788,7 @@ NDIS_STATUS ParaNdis_OnSetVlanId(PARANDIS_ADAPTER *pContext, tOidDesc *pOid)
     {
         status = ParaNdis_OidSetCopy(pOid, &pContext->VlanId, sizeof(pContext->VlanId));
         pContext->VlanId &= 0xfff;
-        DPrintf(0, ("[%s] new value %d on MAC %X\n", __FUNCTION__, pContext->VlanId, pContext->CurrentMacAddress[5]));
+        DPrintf(0, "[%s] new value %d on MAC %X\n", __FUNCTION__, pContext->VlanId, pContext->CurrentMacAddress[5]);
         ParaNdis_DeviceFiltersUpdateVlanId(pContext);
     }
     return status;

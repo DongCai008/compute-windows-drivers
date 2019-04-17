@@ -1,31 +1,42 @@
 #include "ndis56common.h"
 #include "kdebugprint.h"
+#include "ParaNdis_DebugHistory.h"
+#include "Trace.h"
+#ifdef NETKVM_WPP_ENABLED
+#include "ParaNdis-TX.tmh"
+#endif
 
-CNBL::CNBL(PNET_BUFFER_LIST NBL, PPARANDIS_ADAPTER Context, CParaNdisTX &ParentTXPath)
+CNBL::CNBL(PNET_BUFFER_LIST NBL, PPARANDIS_ADAPTER Context, CParaNdisTX &ParentTXPath, CAllocationHelper<CNBL> *NBLAllocator, CAllocationHelper<CNB> *NBAllocator)
     : m_NBL(NBL)
     , m_Context(Context)
     , m_ParentTXPath(&ParentTXPath)
+    , CNdisAllocatableViaHelper<CNBL>(NBLAllocator)
+    , m_NBAllocator(NBAllocator)
 {
     m_NBL->Scratch = this;
     m_LsoInfo.Value = NET_BUFFER_LIST_INFO(m_NBL, TcpLargeSendNetBufferListInfo);
     m_CsoInfo.Value = NET_BUFFER_LIST_INFO(m_NBL, TcpIpChecksumNetBufferListInfo);
+    ParaNdis_DebugNBLIn(NBL, m_LogIndex);
 }
 
 CNBL::~CNBL()
 {
     CDpcIrqlRaiser OnDpc;
 
-    m_MappedBuffers.ForEachDetached([this](CNB *NB)
-                                    { CNB::Destroy(NB, m_Context->MiniportHandle); });
-
     m_Buffers.ForEachDetached([this](CNB *NB)
-                              { CNB::Destroy(NB, m_Context->MiniportHandle); });
+                              { CNB::Destroy(NB); });
 
     if(m_NBL)
     {
         auto NBL = DetachInternalObject();
-        NET_BUFFER_LIST_NEXT_NBL(NBL) = nullptr;
-        NdisMSendNetBufferListsComplete(m_Context->MiniportHandle, NBL, 0);
+        NETKVM_ASSERT(NET_BUFFER_LIST_NEXT_NBL(NBL) == nullptr);
+        if (CallCompletionForNBL(m_Context, NBL))
+        {
+            m_ParentTXPath->CompleteOutstandingNBLChain(NBL);
+        } else
+        {
+            m_ParentTXPath->CompleteOutstandingInternalNBL(NBL);
+        }
     }
 }
 
@@ -42,7 +53,7 @@ bool CNBL::ParsePriority()
 
     if (priorityInfo.TagHeader.CanonicalFormatId || !IsValidVlanId(m_Context, priorityInfo.TagHeader.VlanId))
     {
-        DPrintf(0, ("[%s] Discarded invalid priority tag %p\n", __FUNCTION__, priorityInfo.Value));
+        DPrintf(0, "[%s] Discarded invalid priority tag %p\n", __FUNCTION__, priorityInfo.Value);
         return false;
     }
     else if (priorityInfo.Value)
@@ -56,7 +67,7 @@ bool CNBL::ParsePriority()
         if (priorityInfo.Value)
         {
             m_TCI = static_cast<UINT16>(priorityInfo.TagHeader.UserPriority << 13 | priorityInfo.TagHeader.VlanId);
-            DPrintf(1, ("[%s] Populated priority tag %p\n", __FUNCTION__, priorityInfo.Value));
+            DPrintf(1, "[%s] Populated priority tag %p\n", __FUNCTION__, priorityInfo.Value);
         }
     }
 
@@ -71,7 +82,8 @@ void CNBL::RegisterNB(CNB *NB)
 
 void CNBL::RegisterMappedNB(CNB *NB)
 {
-    if (m_MappedBuffers.PushBack(NB) == m_BuffersNumber)
+    UNREFERENCED_PARAMETER(NB);
+    if (m_BuffersNumber == (ULONG)m_BuffersMapped.AddRef())
     {
         m_ParentTXPath->NBLMappingDone(this);
     }
@@ -80,10 +92,12 @@ void CNBL::RegisterMappedNB(CNB *NB)
 bool CNBL::ParseBuffers()
 {
     m_MaxDataLength = 0;
+    CAllocationHelper<CNB> *pNBAllocator = this;
 
     for (auto NB = NET_BUFFER_LIST_FIRST_NB(m_NBL); NB != nullptr; NB = NET_BUFFER_NEXT_NB(NB))
     {
-        CNB *NBHolder = new (m_Context->MiniportHandle) CNB(NB, this, m_Context);
+        CNB *NBHolder = new (pNBAllocator) CNB(NB, this, m_Context, pNBAllocator);
+        pNBAllocator = m_NBAllocator;
         if(!NBHolder || !NBHolder->IsValid())
         {
             return false;
@@ -94,7 +108,7 @@ bool CNBL::ParseBuffers()
 
     if(m_MaxDataLength == 0)
     {
-        DPrintf(0, ("Empty NBL (%p) dropped\n", __FUNCTION__, m_NBL));
+        DPrintf(0, "[%s] - Empty NBL (%p) dropped\n", __FUNCTION__, m_NBL);
         return false;
     }
 
@@ -113,7 +127,7 @@ bool CNBL::FitsLSO()
 
 bool CNBL::ParseLSO()
 {
-    ASSERT(IsLSO());
+    NETKVM_ASSERT(IsLSO());
 
     if (m_LsoInfo.LsoV1Transmit.Type != NDIS_TCP_LARGE_SEND_OFFLOAD_V1_TYPE &&
         m_LsoInfo.LsoV2Transmit.Type != NDIS_TCP_LARGE_SEND_OFFLOAD_V2_TYPE)
@@ -158,14 +172,14 @@ template <typename TClassPred, typename TOffloadPred, typename TSupportedPred>
 bool CNBL::ParseCSO(TClassPred IsClass, TOffloadPred IsOffload,
                     TSupportedPred IsSupported, LPSTR OffloadName)
 {
-    ASSERT(IsClass());
+    NETKVM_ASSERT(IsClass());
     UNREFERENCED_PARAMETER(IsClass);
 
     if (IsOffload())
     {
         if(!IsSupported())
         {
-            DPrintf(0, ("[%s] %s request when it is not supported\n", __FUNCTION__, OffloadName));
+            DPrintf(0, "[%s] %s request when it is not supported\n", __FUNCTION__, OffloadName);
 #if FAIL_UNEXPECTED
             // ignore unexpected CS requests while this passes WHQL
             return false;
@@ -236,7 +250,7 @@ void CNBL::StartMapping()
 
     AddRef();
 
-    m_Buffers.ForEachDetached([this](CNB *NB)
+    m_Buffers.ForEach([this](CNB *NB)
                               {
                                   if (!NB->ScheduleBuildSGListForTx())
                                   {
@@ -250,42 +264,115 @@ void CNBL::StartMapping()
 
 void CNBL::OnLastReferenceGone()
 {
-    Destroy(this, m_Context->MiniportHandle);
+    Destroy(this);
 }
 
-CParaNdisTX::CParaNdisTX()
-{ }
+CParaNdisTX::~CParaNdisTX()
+{
+
+    TPassiveSpinLocker LockedContext(m_Lock);
+    CNBL* NBL = nullptr;
+
+    NBL = m_SendQueue.Dequeue();
+
+    while (NBL)
+    {
+        NBL->~CNBL();
+        NBL = m_SendQueue.Dequeue();
+    }
+
+    m_SendQueue.~CLockFreeDynamicQueue();
+
+    DPrintf(1, "Pools state %d-> NB: %d, NBL: %d\n", m_queueIndex, m_nbPool.GetCount(), m_nblPool.GetCount());
+    if (m_StateMachineRegistered)
+    {
+        m_Context->m_StateMachine.UnregisterFlow(m_StateMachine);
+        m_StateMachineRegistered = false;
+    }
+}
 
 bool CParaNdisTX::Create(PPARANDIS_ADAPTER Context, UINT DeviceQueueIndex)
 {
     m_Context = Context;
     m_queueIndex = (u16)DeviceQueueIndex;
 
+    Context->m_StateMachine.RegisterFlow(m_StateMachine);
+    m_StateMachineRegistered = true;
+
+    m_nbPool.Create(Context->MiniportHandle);
+    m_nblPool.Create(Context->MiniportHandle);
+
+    CreatePath();
+
     return m_VirtQueue.Create(DeviceQueueIndex,
-        m_Context->IODevice,
+        &m_Context->IODevice,
         m_Context->MiniportHandle,
-        m_Context->bDoPublishIndices ? true : false,
         m_Context->maxFreeTxDescriptors,
         m_Context->nVirtioHeaderSize,
-        m_Context);
+        m_Context) &&
+        m_SendQueue.Create(Context, m_SendQueue.IsPowerOfTwo(m_Context->maxFreeTxDescriptors) ?
+            8 * m_Context->maxFreeTxDescriptors : PARANDIS_TX_LOCK_FREE_QUEUE_DEFAULT_SIZE);
+}
+
+void CParaNdisTX::CompleteOutstandingNBLChain(PNET_BUFFER_LIST NBL, ULONG Flags)
+{
+    ULONG NBLNum = ParaNdis_CountNBLs(NBL);
+
+    ParaNdis_CompleteNBLChain(m_Context->MiniportHandle, NBL, Flags);
+
+    m_StateMachine.UnregisterOutstandingItems(NBLNum);
+}
+
+void CParaNdisTX::CompleteOutstandingInternalNBL(PNET_BUFFER_LIST NBL, BOOLEAN UnregisterOutstanding /*= TRUE*/)
+{
+    ULONG NBLNum = ParaNdis_CountNBLs(NBL);
+
+    CGuestAnnouncePackets::NblCompletionCallback(NBL);
+
+    if (UnregisterOutstanding)
+    {
+        m_StateMachine.UnregisterOutstandingItems(NBLNum);
+    }
 }
 
 void CParaNdisTX::Send(PNET_BUFFER_LIST NBL)
 {
     PNET_BUFFER_LIST nextNBL = nullptr;
+    NDIS_STATUS RejectionStatus = NDIS_STATUS_FAILURE;
+    BOOLEAN CallCompletion = CallCompletionForNBL(m_Context, NBL);
+
+    if (!m_StateMachine.RegisterOutstandingItems(ParaNdis_CountNBLs(NBL), &RejectionStatus))
+    {
+        if (CallCompletion)
+        {
+            ParaNdis_CompleteNBLChainWithStatus(m_Context->MiniportHandle, NBL, RejectionStatus);
+        }
+        else
+        {
+            CompleteOutstandingInternalNBL(NBL, FALSE);
+        }
+        return;
+    }
 
     for(auto currNBL = NBL; currNBL != nullptr; currNBL = nextNBL)
     {
         nextNBL = NET_BUFFER_LIST_NEXT_NBL(currNBL);
         NET_BUFFER_LIST_NEXT_NBL(currNBL) = nullptr;
 
-        auto NBLHolder = new (m_Context->MiniportHandle) CNBL(currNBL, m_Context, *this);
+        auto NBLHolder = new (&m_nblPool) CNBL(currNBL, m_Context, *this, &m_nblPool, &m_nbPool);
 
         if (NBLHolder == nullptr)
         {
-            CNBL OnStack(currNBL, m_Context, *this);
-            OnStack.SetStatus(NDIS_STATUS_RESOURCES);
-            DPrintf(0, ("ERROR: Failed to allocate CNBL instance\n"));
+            currNBL->Status = NDIS_STATUS_RESOURCES;
+            if (CallCompletion)
+            {
+                CompleteOutstandingNBLChain(currNBL);
+            }
+            else
+            {
+                CompleteOutstandingInternalNBL(NBL);
+            }
+            DPrintf(0, "ERROR: Failed to allocate CNBL instance\n");
             continue;
         }
 
@@ -304,12 +391,16 @@ void CParaNdisTX::Send(PNET_BUFFER_LIST NBL)
 
 void CParaNdisTX::NBLMappingDone(CNBL *NBLHolder)
 {
-    ASSERT(KeGetCurrentIrql() == DISPATCH_LEVEL);
+    NETKVM_ASSERT(KeGetCurrentIrql() == DISPATCH_LEVEL);
 
-    if (NBLHolder->MappingSuceeded())
+    if (NBLHolder->MappingSucceeded() && m_VirtQueue.Alive())
     {
-        DoWithTXLock([NBLHolder, this](){ m_SendList.PushBack(NBLHolder); });
-        DoPendingTasks(false);
+        m_SendQueue.Enqueue(NBLHolder);
+
+        if (m_DpcWaiting == 0)
+        {
+            DoPendingTasks(NBLHolder);
+        }
     }
     else
     {
@@ -320,40 +411,29 @@ void CParaNdisTX::NBLMappingDone(CNBL *NBLHolder)
 
 CNB *CNBL::PopMappedNB()
 {
-    m_MappedBuffersDetached++;
-    return m_MappedBuffers.Pop();
+    m_MappedBuffersDetached.AddRef();
+    return m_Buffers.Pop();
 }
 void CNBL::PushMappedNB(CNB *NB)
 {
-    m_MappedBuffersDetached--;
-    m_MappedBuffers.Push(NB);
+    m_MappedBuffersDetached.Release();
+    m_Buffers.Push(NB);
 }
 
-//TODO: Needs review
 void CNBL::NBComplete()
 {
-    m_BuffersDone++;
-    m_MappedBuffersDetached--;
+    m_BuffersDone.AddRef();
+    m_MappedBuffersDetached.Release();
 }
 
 bool CNBL::IsSendDone()
 {
-    return m_BuffersDone == m_BuffersNumber;
-}
-
-//TODO: Needs review
-void CNBL::CompleteMappedBuffers()
-{
-    m_MappedBuffers.ForEachDetached([this](CNB *NB)
-                                        {
-                                            NBComplete();
-                                            CNB::Destroy(NB, m_Context->MiniportHandle);
-                                        });
+    return (LONG)m_BuffersDone == (LONG)m_BuffersNumber && !HaveDetachedBuffers();
 }
 
 PNET_BUFFER_LIST CNBL::DetachInternalObject()
 {
-    m_MappedBuffers.ForEach([this](CNB *NB)
+    m_Buffers.ForEach([this](CNB *NB)
     {
         NB->ReleaseResources();
     });
@@ -368,82 +448,109 @@ PNET_BUFFER_LIST CNBL::DetachInternalObject()
     NET_BUFFER_LIST_INFO(m_NBL, TcpLargeSendNetBufferListInfo) = m_LsoInfo.Value;
 
     auto Res = m_NBL;
+    ParaNdis_DebugNBLOut(m_LogIndex, Res);
     m_NBL = nullptr;
     return Res;
 }
 
-PNET_BUFFER_LIST CParaNdisTX::ProcessWaitingList()
+PNET_BUFFER_LIST CParaNdisTX::ProcessWaitingList(CRawCNBLList& completed)
 {
     PNET_BUFFER_LIST CompletedNBLs = nullptr;
 
+    // locked part under waiting list lock
+    {
+        TDPCSpinLocker LockedContext(m_WaitingListLock);
 
-    m_WaitingList.ForEachDetachedIf([](CNBL* NBL) { return NBL->IsSendDone(); },
-                                        [&](CNBL* NBL)
-                                        {
-                                            NBL->SetStatus(NDIS_STATUS_SUCCESS);
-                                            auto RawNBL = NBL->DetachInternalObject();
-                                            NBL->Release();
-                                            NET_BUFFER_LIST_NEXT_NBL(RawNBL) = CompletedNBLs;
-                                            CompletedNBLs = RawNBL;
-                                        });
+        completed.ForEachDetachedIf([](CNBL* NBL) { return !NBL->IsSendDone(); },
+            [&](CNBL* NBL)
+        {
+            m_WaitingList.PushBack(NBL);
+        });
+
+        m_WaitingList.ForEachDetachedIf([](CNBL* NBL) { return NBL->IsSendDone(); },
+            [&](CNBL* NBL)
+        {
+            completed.PushBack(NBL);
+        });
+    }
+    // end of locked part under waiting list lock
+
+    completed.ForEachDetached([&](CNBL* NBL)
+    {
+        NBL->SetStatus(NDIS_STATUS_SUCCESS);
+        auto RawNBL = NBL->DetachInternalObject();
+        NBL->Release();
+        if (CallCompletionForNBL(m_Context, RawNBL))
+        {
+            NET_BUFFER_LIST_NEXT_NBL(RawNBL) = CompletedNBLs;
+            CompletedNBLs = RawNBL;
+        }
+        else
+        {
+            CompleteOutstandingInternalNBL(RawNBL);
+        }
+    });
 
     return CompletedNBLs;
 }
 
-//TODO: Needs review
-PNET_BUFFER_LIST CParaNdisTX::RemoveAllNonWaitingNBLs()
+void CParaNdisTX::Notify(SMNotifications message)
 {
-    PNET_BUFFER_LIST RemovedNBLs = nullptr;
-    auto status = ParaNdis_ExactSendFailureStatus(m_Context);
+    CRawCNBList  nbToFree;
+    CRawCNBLList completedNBLs;
 
-    m_SendList.ForEachDetachedIf([](CNBL *NBL) { return !NBL->HaveDetachedBuffers(); },
-                                     [&](CNBL *NBL)
-                                     {
-                                         NBL->SetStatus(status);
-                                         auto RawNBL = NBL->DetachInternalObject();
-                                         NBL->Release();
-                                         NET_BUFFER_LIST_NEXT_NBL(RawNBL) = RemovedNBLs;
-                                         RemovedNBLs = RawNBL;
-                                     });
+    __super::Notify(message);
 
-    m_SendList.ForEach([](CNBL *NBL) { NBL->CompleteMappedBuffers(); });
-
-    return RemovedNBLs;
-}
-
-bool CParaNdisTX::Pause()
-{
-    PNET_BUFFER_LIST NBL = nullptr;
-    bool res;
-
-    DoWithTXLock([this, &NBL, &res]()
-                 {
-                     NBL = RemoveAllNonWaitingNBLs();
-                     res = (!m_VirtQueue.HasPacketsInHW() && m_WaitingList.IsEmpty());
-                 });
-
-    if(NBL != nullptr)
+    if (message != SupriseRemoved)
     {
-        NdisMSendNetBufferListsComplete(m_Context->MiniportHandle, NBL, 0);
+        // probably similar processing we'll do in case of reset
+        return;
     }
 
-    return res;
+    CDpcIrqlRaiser OnDpc;
+
+    // pause follows after we return all the NBLs
+    DoWithTXLock([&]()
+    {
+        //
+        m_VirtQueue.ProcessTXCompletions(nbToFree, true);
+
+        while (HaveMappedNBLs())
+        {
+            CNBL *nbl = PopMappedNBL();
+            nbl->SetStatus(NDIS_STATUS_SEND_ABORTED);
+            completedNBLs.Push(nbl);
+            while (nbl->HaveMappedBuffers())
+            {
+                CNB *nb = nbl->PopMappedNB();
+                CNB::Destroy(nb);
+                nbl->NBComplete();
+            }
+        }
+    });
+
+    PostProcessPendingTask(nbToFree, completedNBLs);
 }
 
 PNET_BUFFER_LIST CParaNdisTX::BuildCancelList(PVOID CancelId)
 {
     PNET_BUFFER_LIST CanceledNBLs = nullptr;
-    TSpinLocker LockedContext(m_Lock);
+    TPassiveSpinLocker LockedContext(m_Lock);
+    CNBL* NBL = nullptr;
 
-    m_SendList.ForEachDetachedIf([CancelId](CNBL* NBL){ return NBL->MatchCancelID(CancelId) && !NBL->HaveDetachedBuffers(); },
-                                     [this, &CanceledNBLs](CNBL* NBL)
-                                     {
-                                         NBL->SetStatus(NDIS_STATUS_SEND_ABORTED);
-                                         auto RawNBL = NBL->DetachInternalObject();
-                                         NBL->Release();
-                                         NET_BUFFER_LIST_NEXT_NBL(RawNBL) = CanceledNBLs;
-                                         CanceledNBLs = RawNBL;
-                                     });
+    NBL = PopMappedNBL();
+    do
+    {
+        if (NBL->MatchCancelID(CancelId) && !NBL->HaveDetachedBuffers())
+        {
+            NBL->SetStatus(NDIS_STATUS_SEND_ABORTED);
+            auto RawNBL = NBL->DetachInternalObject();
+            NBL->Release();
+            NET_BUFFER_LIST_NEXT_NBL(RawNBL) = CanceledNBLs;
+            CanceledNBLs = RawNBL;
+        }
+        NBL = PopMappedNBL();
+    } while (NBL);
 
     return CanceledNBLs;
 }
@@ -453,52 +560,34 @@ void CParaNdisTX::CancelNBLs(PVOID CancelId)
     auto CanceledNBLs = BuildCancelList(CancelId);
     if (CanceledNBLs != nullptr)
     {
-        NdisMSendNetBufferListsComplete(m_Context->MiniportHandle, CanceledNBLs, 0);
+        CompleteOutstandingNBLChain(CanceledNBLs);
     }
 }
 
-//TODO: Requires review
-BOOLEAN _Function_class_(MINIPORT_SYNCHRONIZE_INTERRUPT) CParaNdisTX::RestartQueueSynchronously(tSynchronizedContext *ctx)
+//called with TX lock held
+bool CParaNdisTX::RestartQueue()
 {
-    auto TXPath = static_cast<CParaNdisTX *>(ctx->Parameter);
-    return !TXPath->m_VirtQueue.Restart();
-}
-
-//TODO: Requires review
-bool CParaNdisTX::RestartQueue(bool DoKick)
-{
-    TSpinLocker LockedContext(m_Lock);
     auto res = ParaNdis_SynchronizeWithInterrupt(m_Context,
                                                  m_messageIndex,
-                                                 CParaNdisTX::RestartQueueSynchronously,
+                                                 RestartQueueSynchronously,
                                                  this) ? true : false;
-
-    if(DoKick)
-    {
-        Kick();
-    }
-
     return res;
 }
 
-bool CParaNdisTX::SendMapped(bool IsInterrupt, PNET_BUFFER_LIST &NBLFailNow)
+//called with TX lock held
+//returns queue restart status
+bool CParaNdisTX::SendMapped(bool IsInterrupt, CRawCNBLList& toWaitingList)
 {
-    if(!ParaNdis_IsSendPossible(m_Context))
+    bool SentOutSomeBuffers = false;
+    bool bRestartStatus = false;
+    bool HaveBuffers = true;
+
+    if(ParaNdis_IsSendPossible(m_Context))
     {
-        NBLFailNow = RemoveAllNonWaitingNBLs();
-        if (NBLFailNow)
-        {
-            DPrintf(0, ("[%s] Failing send", __FUNCTION__));
-        }
-    }
-    else
-    {
-        bool SentOutSomeBuffers = false;
-        auto HaveBuffers = true;
 
         while (HaveBuffers && HaveMappedNBLs())
         {
-            auto NBLHolder = PopMappedNBL();
+            auto NBLHolder = PeekMappedNBL();
 
             if (NBLHolder->HaveMappedBuffers())
             {
@@ -509,7 +598,6 @@ bool CParaNdisTX::SendMapped(bool IsInterrupt, PNET_BUFFER_LIST &NBLFailNow)
                 {
                 case SUBMIT_NO_PLACE_IN_QUEUE:
                     NBLHolder->PushMappedNB(NBHolder);
-                    PushMappedNBL(NBLHolder);
                     HaveBuffers = false;
                     // break the loop, allow to kick and free some buffers
                     break;
@@ -522,12 +610,16 @@ bool CParaNdisTX::SendMapped(bool IsInterrupt, PNET_BUFFER_LIST &NBLFailNow)
                     // if this NBL finished?
                     if (!NBLHolder->HaveMappedBuffers())
                     {
-                        m_WaitingList.Push(NBLHolder);
+                        /* We use PeekMappedNBL method to get the current NBL
+                         * that should be processed from the queue, when we finish
+                         * sending all it's NBs, we should pop it from the queue.
+                         */
+                        PopMappedNBL();
+                        toWaitingList.Push(NBLHolder);
                     }
                     else
                     {
-                        // no, insert it back to the queue
-                        PushMappedNBL(NBLHolder);
+                        // no, keep it in the queue
                     }
 
                     if (result == SUBMIT_SUCCESS)
@@ -536,91 +628,100 @@ bool CParaNdisTX::SendMapped(bool IsInterrupt, PNET_BUFFER_LIST &NBLFailNow)
                     }
                     else
                     {
-                        NBHolder->SendComplete();
-                        CNB::Destroy(NBHolder, m_Context->MiniportHandle);
+                        CNB::Destroy(NBHolder);
+                        NBLHolder->NBComplete();
                     }
                     break;
                 default:
-                    ASSERT(false);
+                    NETKVM_ASSERT(false);
                     break;
                 }
             }
             else
             {
-
-                //TODO: Refactoring needed
-                //This is a case when pause called, mapped list cleared but NBL is still in the send list
-                m_WaitingList.Push(NBLHolder);
-            }
-        }
-
-        if (SentOutSomeBuffers)
-        {
-            DPrintf(2, ("[%s] sent down\n", __FUNCTION__, SentOutSomeBuffers));
-            if (IsInterrupt)
-            {
-                return true;
-            }
-            else
-            {
-                m_VirtQueue.Kick();
+                NETKVM_ASSERT(false);
             }
         }
     }
 
-    return false;
+    if (IsInterrupt)
+    {
+        bRestartStatus = RestartQueue();
+    }
+
+    if (SentOutSomeBuffers || !HaveBuffers)
+    {
+        m_VirtQueue.Kick();
+    }
+
+    return bRestartStatus;
 }
 
-bool CParaNdisTX::DoPendingTasks(bool IsInterrupt)
+void CParaNdisTX::PostProcessPendingTask(
+    CRawCNBList& nbToFree,
+    CRawCNBLList& completedNBLs)
 {
-    ONPAUSECOMPLETEPROC CallbackToCall = nullptr;
-    PNET_BUFFER_LIST pNBLFailNow = nullptr;
     PNET_BUFFER_LIST pNBLReturnNow = nullptr;
-    bool bDoKick = false;
-
-    DoWithTXLock([&] ()
-                 {
-                    m_VirtQueue.ProcessTXCompletions();
-                    bDoKick = SendMapped(IsInterrupt, pNBLFailNow);
-                    pNBLReturnNow = ProcessWaitingList();
-                    {
-                        NdisDprAcquireSpinLock(&m_Context->m_CompletionLock);
-
-                        if (m_Context->SendState == srsPausing)
-                        {
-                            CNdisPassiveWriteAutoLock tLock(m_Context->m_PauseLock);
-
-                            if (m_Context->SendState == srsPausing && !ParaNdis_HasPacketsInHW(m_Context))
-                            {
-                                CallbackToCall = m_Context->SendPauseCompletionProc;
-                                m_Context->SendPauseCompletionProc = nullptr;
-                                m_Context->SendState = srsDisabled;
-                            }
-                        }
-                    }
-                 });
-
-    if (pNBLFailNow)
+    if (!nbToFree.IsEmpty() || !completedNBLs.IsEmpty())
     {
-        NdisMSendNetBufferListsComplete(m_Context->MiniportHandle, pNBLFailNow,
-                                        NDIS_SEND_COMPLETE_FLAGS_DISPATCH_LEVEL);
+        nbToFree.ForEachDetached([](CNB *NB)
+        {
+            CNBL *NBL = NB->GetParentNBL();
+            CNB::Destroy(NB);
+            NBL->NBComplete();
+        }
+        );
+
+        pNBLReturnNow = ProcessWaitingList(completedNBLs);
+        if (pNBLReturnNow)
+        {
+            CompleteOutstandingNBLChain(pNBLReturnNow, NDIS_SEND_COMPLETE_FLAGS_DISPATCH_LEVEL);
+        }
+    }
+}
+
+bool CParaNdisTX::DoPendingTasks(CNBL *nblHolder)
+{
+    bool bRestartQueueStatus = false;
+    bool bFromDpc = nblHolder == nullptr;
+    CRawCNBList  nbToFree;
+    CRawCNBLList completedNBLs;
+
+    if (bFromDpc)
+    {
+        m_DpcWaiting.AddRef();
     }
 
-    if (pNBLReturnNow)
+    DoWithTXLock([&]()
     {
-        NdisMSendNetBufferListsComplete(m_Context->MiniportHandle, pNBLReturnNow,
-                                        NDIS_SEND_COMPLETE_FLAGS_DISPATCH_LEVEL);
-    }
+        m_VirtQueue.ProcessTXCompletions(nbToFree);
 
-#pragma warning(suppress: 26110)
-    NdisDprReleaseSpinLock(&m_Context->m_CompletionLock);
+        if (bFromDpc)
+        {
+            m_DpcWaiting.Release();
+        }
 
-    if (CallbackToCall != nullptr)
-    {
-        CallbackToCall(m_Context);
-    }
+        if (bFromDpc || 0 == (LONG)m_DpcWaiting)
+        {
+            bRestartQueueStatus = SendMapped(bFromDpc, completedNBLs);
+            if (bRestartQueueStatus)
+            {
+                // we can enter here only when we called from DPC
+                // if we can't enable interrupts on queue right now,
+                // we can retrieve completed packets and try again
+                m_VirtQueue.ProcessTXCompletions(nbToFree);
+                bRestartQueueStatus = SendMapped(true, completedNBLs);
+            }
+        } else
+        {
+            // the call initiated by Send(), we can give up
+            // and let pending DPC do the job instead of wait
+        }
+    });
 
-    return bDoKick;
+    PostProcessPendingTask(nbToFree, completedNBLs);
+
+    return bRestartQueueStatus;
 }
 
 void CNB::MappingDone(PSCATTER_GATHER_LIST SGL)
@@ -631,7 +732,7 @@ void CNB::MappingDone(PSCATTER_GATHER_LIST SGL)
 
 CNB::~CNB()
 {
-    ASSERT(KeGetCurrentIrql() == DISPATCH_LEVEL);
+    NETKVM_ASSERT(KeGetCurrentIrql() == DISPATCH_LEVEL);
 
     if(m_SGL != nullptr)
     {
@@ -650,7 +751,7 @@ void CNB::ReleaseResources()
 
 bool CNB::ScheduleBuildSGListForTx()
 {
-    ASSERT(KeGetCurrentIrql() == DISPATCH_LEVEL);
+    NETKVM_ASSERT(KeGetCurrentIrql() == DISPATCH_LEVEL);
 
     return NdisMAllocateNetBufferSGList(m_Context->DmaHandle, m_NB, this,
                                         NDIS_SG_LIST_WRITE_TO_DEVICE, nullptr, 0) == NDIS_STATUS_SUCCESS;
@@ -674,7 +775,7 @@ void CNB::PopulateIPLength(IPHeader *IpHeader, USHORT IpLength) const
     }
     else
     {
-        DPrintf(0, ("[%s] ERROR: Bad version of IP header!\n", __FUNCTION__));
+        DPrintf(0, "[%s] ERROR: Bad version of IP header!\n", __FUNCTION__);
     }
 }
 
@@ -714,7 +815,7 @@ USHORT CNB::QueryL4HeaderOffset(PVOID PacketData, ULONG IpHeaderOffset) const
     }
     else
     {
-        DPrintf(0, ("[%s] ERROR: NOT an IP packet - expected troubles!\n", __FUNCTION__));
+        DPrintf(0, "[%s] ERROR: NOT an IP packet - expected troubles!\n", __FUNCTION__);
         Res = 0;
     }
     return Res;
@@ -871,9 +972,9 @@ bool CNB::Copy(PVOID Dst, ULONG Length) const
         PVOID CurrAddr;
 
 #if NDIS_SUPPORT_NDIS620
-        NdisQueryMdl(CurrMDL, &CurrAddr, &CurrLen, static_cast<MM_PAGE_PRIORITY>(LowPagePriority | MdlMappingNoExecute));
+        NdisQueryMdl(CurrMDL, &CurrAddr, &CurrLen, MM_PAGE_PRIORITY(LowPagePriority | MdlMappingNoExecute));
 #else
-        NdisQueryMdl(CurrMDL, &CurrAddr, &CurrLen, LowPagePriority);
+        NdisQueryMdl(CurrMDL, &CurrAddr, &CurrLen, MM_PAGE_PRIORITY(LowPagePriority));
 #endif
 
         if (CurrAddr == nullptr)

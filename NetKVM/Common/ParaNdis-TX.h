@@ -1,6 +1,11 @@
 #pragma once
 #include "ParaNdis-VirtQueue.h"
 #include "ParaNdis-AbstractPath.h"
+#include "ParaNdis_GuestAnnounce.h"
+#include "ParaNdis_LockFreeQueue.h"
+
+/* Must be a power of 2 */
+#define PARANDIS_TX_LOCK_FREE_QUEUE_DEFAULT_SIZE 2048
 
 class CNB;
 class CParaNdisTX;
@@ -8,134 +13,27 @@ class CParaNdisTX;
 typedef struct _tagPARANDIS_ADAPTER *PPARANDIS_ADAPTER;
 class CNBL;
 
-typedef CNdisAllocatable<CNBL, 'LNHR'> CNBLAllocator;
-
-class CNBL : public CNBLAllocator, public CRefCountingObject
+class CNB : public CNdisAllocatableViaHelper<CNB>
 {
 public:
-    CNBL(PNET_BUFFER_LIST NBL, PPARANDIS_ADAPTER Context, CParaNdisTX &ParentTXPath);
-    ~CNBL();
-    bool Prepare()
-    { return (ParsePriority() && ParseBuffers() && ParseOffloads()); }
-    void StartMapping();
-    void RegisterMappedNB(CNB *NB);
-    bool MappingSuceeded() { return !m_HaveFailedMappings; }
-    void SetStatus(NDIS_STATUS Status)
-    { m_NBL->Status = Status; }
-
-    CNB *PopMappedNB();
-    void PushMappedNB(CNB *NBHolder);
-    bool HaveMappedBuffers()
-    { return !m_MappedBuffers.IsEmpty(); }
-
-    bool HaveDetachedBuffers()
-    { return m_MappedBuffersDetached != 0; }
-
-    //TODO: Needs review
-    void CompleteMappedBuffers();
-
-    PNET_BUFFER_LIST DetachInternalObject();
-    //TODO: Needs review
-    void NBComplete();
-    bool IsSendDone();
-
-    UCHAR ProtocolID()
-    { return static_cast<UCHAR>(
-        reinterpret_cast<ULONG_PTR>(NET_BUFFER_LIST_INFO(m_NBL, NetBufferListProtocolId))); }
-    bool MatchCancelID(PVOID ID)
-    { return NDIS_GET_NET_BUFFER_LIST_CANCEL_ID(m_NBL) == ID; }
-    ULONG MSS()
-    { return m_LsoInfo.LsoV2Transmit.MSS; }
-    ULONG TCPHeaderOffset()
-    { return IsLSO() ? LsoTcpHeaderOffset() : CsoTcpHeaderOffset(); }
-    UINT16 TCI()
-    { return m_TCI; }
-    bool IsLSO()
-    { return (m_LsoInfo.Value != nullptr); }
-    bool IsTcpCSO()
-    { return m_CsoInfo.Transmit.TcpChecksum; }
-    bool IsUdpCSO()
-    { return m_CsoInfo.Transmit.UdpChecksum; }
-    bool IsIPHdrCSO()
-    { return m_CsoInfo.Transmit.IpHeaderChecksum; }
-    void UpdateLSOTxStats(ULONG ChunkSize)
-    {
-        if (m_LsoInfo.LsoV1TransmitComplete.Type == NDIS_TCP_LARGE_SEND_OFFLOAD_V1_TYPE)
-        {
-            m_TransferSize += ChunkSize;
-        }
-    }
-
-private:
-    virtual void OnLastReferenceGone() override;
-
-    static void Destroy(CNBL *ptr, NDIS_HANDLE MiniportHandle)
-    { CNBLAllocator::Destroy(ptr, MiniportHandle); }
-
-    void RegisterNB(CNB *NB);
-    bool ParsePriority();
-    bool ParseBuffers();
-    bool ParseOffloads();
-    bool ParseLSO();
-    bool NeedsLSO();
-    ULONG LsoTcpHeaderOffset()
-    { return m_LsoInfo.LsoV2Transmit.TcpHeaderOffset; }
-    ULONG CsoTcpHeaderOffset()
-    { return m_CsoInfo.Transmit.TcpHeaderOffset; }
-    bool FitsLSO();
-    bool IsIP4CSO()
-    { return m_CsoInfo.Transmit.IsIPv4; }
-    bool IsIP6CSO()
-    { return m_CsoInfo.Transmit.IsIPv6; }
-
-    template <typename TClassPred, typename TOffloadPred, typename TSupportedPred>
-    bool ParseCSO(TClassPred IsClass, TOffloadPred IsOffload,
-                  TSupportedPred IsSupported, LPSTR OffloadName);
-
-    PNET_BUFFER_LIST m_NBL;
-    PPARANDIS_ADAPTER m_Context;
-    CParaNdisTX *m_ParentTXPath;
-    bool m_HaveFailedMappings = false;
-
-    CNdisList<CNB, CRawAccess, CNonCountingObject> m_Buffers;
-
-    ULONG m_BuffersNumber = 0;
-    CNdisList<CNB, CLockedAccess, CCountingObject> m_MappedBuffers;
-
-    ULONG m_MappedBuffersDetached = 0;
-    //TODO: Needs review
-    ULONG m_BuffersDone = 0;
-
-    ULONG m_MaxDataLength = 0;
-    ULONG m_TransferSize = 0;
-
-    UINT16 m_TCI = 0;
-
-    NDIS_TCP_LARGE_SEND_OFFLOAD_NET_BUFFER_LIST_INFO m_LsoInfo;
-    NDIS_TCP_IP_CHECKSUM_NET_BUFFER_LIST_INFO m_CsoInfo;
-
-    CNBL(const CNBL&) = delete;
-    CNBL& operator= (const CNBL&) = delete;
-
-    DECLARE_CNDISLIST_ENTRY(CNBL);
-};
-
-class CNB : public CNdisAllocatable<CNB, 'BNHR'>
-{
-public:
-    CNB(PNET_BUFFER NB, CNBL *ParentNBL, PPARANDIS_ADAPTER Context)
+    CNB(PNET_BUFFER NB, CNBL *ParentNBL, PPARANDIS_ADAPTER Context, CAllocationHelper<CNB> *Allocator)
         : m_NB(NB)
         , m_ParentNBL(ParentNBL)
         , m_Context(Context)
+        , CNdisAllocatableViaHelper<CNB>(Allocator)
     { }
 
     ~CNB();
 
     bool IsValid() const
-    { return (GetDataLength() != 0); }
+    {
+        return (GetDataLength() != 0);
+    }
 
     ULONG GetDataLength() const
-    { return NET_BUFFER_DATA_LENGTH(m_NB); }
+    {
+        return NET_BUFFER_DATA_LENGTH(m_NB);
+    }
 
     bool ScheduleBuildSGListForTx();
 
@@ -143,15 +41,13 @@ public:
     void ReleaseResources();
 
     CNBL *GetParentNBL() const
-    { return m_ParentNBL; }
+    {
+        return m_ParentNBL;
+    }
 
     ULONG GetSGLLength() const
-    { return m_SGL->NumberOfElements; }
-
-    //TODO: Needs review
-    void SendComplete()
     {
-        m_ParentNBL->NBComplete();
+        return m_SGL->NumberOfElements;
     }
 
     bool BindToDescriptor(CTXDescriptor &Descriptor);
@@ -179,12 +75,139 @@ private:
     DECLARE_CNDISLIST_ENTRY(CNB);
 };
 
-typedef struct _tagSynchronizedContext tSynchronizedContext;
+class CNBL : public CNdisAllocatableViaHelper<CNBL>,
+             public CRefCountingObject,
+             public CAllocationHelper<CNB>
+{
+public:
+    CNBL(PNET_BUFFER_LIST NBL, PPARANDIS_ADAPTER Context, CParaNdisTX &ParentTXPath, CAllocationHelper<CNBL> *NBLAllocator, CAllocationHelper<CNB> *NBAllocator);
+    ~CNBL();
+
+    /* CAllocationHelper<CNB> */
+    CNB *Allocate() override
+    {
+        return (CNB *)&m_CNB_Storage;
+    }
+    void Deallocate(CNB *ptr) override
+    {
+        UNREFERENCED_PARAMETER(ptr);
+    }
+
+    bool Prepare()
+    { return (ParsePriority() && ParseBuffers() && ParseOffloads()); }
+    void StartMapping();
+    void RegisterMappedNB(CNB *NB);
+    bool MappingSucceeded() { return !m_HaveFailedMappings; }
+    void SetStatus(NDIS_STATUS Status)
+    { m_NBL->Status = Status; }
+
+    // called under m_Lock of parent TX path for CNBL object in Send list
+    CNB *PopMappedNB();
+    // called under m_Lock of parent TX path for CNBL object in Send list
+    void PushMappedNB(CNB *NBHolder);
+    // called under m_Lock of parent TX path for CNBL object in Send list
+    bool HaveMappedBuffers()
+    { return !m_Buffers.IsEmpty(); }
+
+    bool HaveDetachedBuffers()
+    { return m_MappedBuffersDetached != 0; }
+
+    PNET_BUFFER_LIST DetachInternalObject();
+    //TODO: Needs review
+    void NBComplete();
+    bool IsSendDone();
+
+    UCHAR ProtocolID()
+    {
+        return reinterpret_cast<UCHAR>(NET_BUFFER_LIST_INFO(m_NBL, NetBufferListProtocolId));
+    }
+    bool MatchCancelID(PVOID ID)
+    { return NDIS_GET_NET_BUFFER_LIST_CANCEL_ID(m_NBL) == ID; }
+    ULONG MSS()
+    { return m_LsoInfo.LsoV2Transmit.MSS; }
+    ULONG TCPHeaderOffset()
+    { return IsLSO() ? LsoTcpHeaderOffset() : CsoTcpHeaderOffset(); }
+    UINT16 TCI()
+    { return m_TCI; }
+    bool IsLSO()
+    { return (m_LsoInfo.Value != nullptr); }
+    bool IsTcpCSO()
+    { return m_CsoInfo.Transmit.TcpChecksum; }
+    bool IsUdpCSO()
+    { return m_CsoInfo.Transmit.UdpChecksum; }
+    bool IsIPHdrCSO()
+    { return m_CsoInfo.Transmit.IpHeaderChecksum; }
+    void UpdateLSOTxStats(ULONG ChunkSize)
+    {
+        if (m_LsoInfo.LsoV1TransmitComplete.Type == NDIS_TCP_LARGE_SEND_OFFLOAD_V1_TYPE)
+        {
+            m_TransferSize += ChunkSize;
+        }
+    }
+
+private:
+    virtual void OnLastReferenceGone() override;
+
+    void RegisterNB(CNB *NB);
+    bool ParsePriority();
+    bool ParseBuffers();
+    bool ParseOffloads();
+    bool ParseLSO();
+    bool NeedsLSO();
+    ULONG LsoTcpHeaderOffset()
+    { return m_LsoInfo.LsoV2Transmit.TcpHeaderOffset; }
+    ULONG CsoTcpHeaderOffset()
+    { return m_CsoInfo.Transmit.TcpHeaderOffset; }
+    bool FitsLSO();
+    bool IsIP4CSO()
+    { return m_CsoInfo.Transmit.IsIPv4; }
+    bool IsIP6CSO()
+    { return m_CsoInfo.Transmit.IsIPv6; }
+
+    template <typename TClassPred, typename TOffloadPred, typename TSupportedPred>
+    bool ParseCSO(TClassPred IsClass, TOffloadPred IsOffload,
+                  TSupportedPred IsSupported, LPSTR OffloadName);
+
+    PNET_BUFFER_LIST m_NBL;
+    PPARANDIS_ADAPTER m_Context;
+    CParaNdisTX *m_ParentTXPath;
+    // align storage for CNB on pointer size boundary and provide enough room for it
+    ULONG_PTR m_CNB_Storage[(sizeof(CNB) + sizeof(ULONG_PTR) - 1) / sizeof(ULONG_PTR)];
+    bool m_HaveFailedMappings = false;
+
+    CNdisList<CNB, CRawAccess, CNonCountingObject> m_Buffers;
+
+    ULONG m_BuffersNumber = 0;
+    CNdisRefCounter m_BuffersMapped;
+    CNdisRefCounter m_MappedBuffersDetached;
+    CNdisRefCounter m_BuffersDone;
+
+    ULONG m_MaxDataLength = 0;
+    ULONG m_TransferSize = 0;
+    ULONG  m_LogIndex;
+
+    UINT16 m_TCI = 0;
+
+    NDIS_TCP_LARGE_SEND_OFFLOAD_NET_BUFFER_LIST_INFO m_LsoInfo;
+    NDIS_TCP_IP_CHECKSUM_NET_BUFFER_LIST_INFO m_CsoInfo;
+
+    CAllocationHelper<CNB> *m_NBAllocator;
+
+    CNBL(const CNBL&) = delete;
+    CNBL& operator= (const CNBL&) = delete;
+
+    DECLARE_CNDISLIST_ENTRY(CNBL);
+};
+
+typedef CNdisList<CNBL, CRawAccess, CNonCountingObject> CRawCNBLList;
+
+typedef CLockFreeDynamicQueue<CNBL> CLockFreeCNBLQueue;
 
 class CParaNdisTX : public CParaNdisTemplatePath<CTXVirtQueue>, public CNdisAllocatable<CParaNdisTX, 'XTHR'>
 {
 public:
-    CParaNdisTX();
+    CParaNdisTX() = default;
+    ~CParaNdisTX();
 
     bool Create(PPARANDIS_ADAPTER Context, UINT DeviceQueueIndex);
 
@@ -195,24 +218,14 @@ public:
     template <typename TFunctor>
     void DoWithTXLock(TFunctor Functor)
     {
-        TSpinLocker LockedContext(m_Lock);
+        TDPCSpinLocker LockedContext(m_Lock);
         Functor();
     }
 
     //TODO: Needs review
-    bool Pause();
-    //TODO: Needs review
     void CancelNBLs(PVOID CancelId);
 
-    //TODO: Temporary!!!
-    void Kick()
-    { m_VirtQueue.Kick(); }
-
-    //TODO: Requires review
-    bool RestartQueue(bool DoKick);
-
-    //TODO: Requires review
-    static BOOLEAN _Function_class_(MINIPORT_SYNCHRONIZE_INTERRUPT) RestartQueueSynchronously(tSynchronizedContext *ctx);
+    bool RestartQueue();
 
     //TODO: Needs review/temporary?
     ULONG GetFreeTXDescriptors()
@@ -222,29 +235,39 @@ public:
     ULONG GetFreeHWBuffers()
     { return m_VirtQueue.GetFreeHWBuffers(); }
 
-    //TODO: Needs review
-    bool DoPendingTasks(bool IsInterrupt);
+    bool DoPendingTasks(CNBL *nblHolder);
 
-    bool QueueHasPacketInHW()
-    {
-        return m_VirtQueue.HasPacketsInHW();
-    }
-
+    void CompleteOutstandingNBLChain(PNET_BUFFER_LIST NBL, ULONG Flags = 0);
+    void CompleteOutstandingInternalNBL(PNET_BUFFER_LIST NBL, BOOLEAN UnregisterOutstanding = TRUE);
 private:
 
-    //TODO: Needs review
-    bool SendMapped(bool IsInterrupt, PNET_BUFFER_LIST &NBLFailNow);
+    virtual void Notify(SMNotifications message) override;
 
-    PNET_BUFFER_LIST ProcessWaitingList();
+    bool SendMapped(bool IsInterrupt, CRawCNBLList& toWaitingList);
+
+    bool FillQueue();
+
+    void PostProcessPendingTask(CRawCNBList& toFree, CRawCNBLList& completed);
+    PNET_BUFFER_LIST ProcessWaitingList(CRawCNBLList& completed);
     PNET_BUFFER_LIST BuildCancelList(PVOID CancelId);
 
-    //TODO: Needs review
-    PNET_BUFFER_LIST RemoveAllNonWaitingNBLs();
+    bool HaveMappedNBLs() { return !m_SendQueue.IsEmpty(); }
 
-    bool HaveMappedNBLs() { return !m_SendList.IsEmpty(); }
-    CNBL *PopMappedNBL() { return m_SendList.Pop(); }
-    void PushMappedNBL(CNBL *NBLHolder) { m_SendList.Push(NBLHolder); }
+    CNBL *PopMappedNBL() { return m_SendQueue.Dequeue(); }
+    CNBL *PeekMappedNBL() { return m_SendQueue.Peek(); }
+    void PushMappedNBL(CNBL *NBLHolder) { m_SendQueue.Enqueue(NBLHolder); }
 
-    CNdisList<CNBL, CRawAccess, CNonCountingObject> m_SendList;
-    CNdisList<CNBL, CRawAccess, CNonCountingObject> m_WaitingList;
+    CDataFlowStateMachine m_StateMachine;
+    bool m_StateMachineRegistered = false;
+
+    // indication that DPC waits on TX lock
+    CNdisRefCounter m_DpcWaiting;
+
+    CLockFreeCNBLQueue m_SendQueue;
+
+    CRawCNBLList m_WaitingList;
+    CNdisSpinLock m_WaitingListLock;
+
+    CPool<CNB, 'BNHR'>  m_nbPool;
+    CPool<CNBL, 'LNHR'> m_nblPool;
 };

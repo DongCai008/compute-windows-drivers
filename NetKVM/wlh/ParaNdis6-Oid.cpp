@@ -1,20 +1,42 @@
-/**********************************************************************
- * Copyright (c) 2008-2015 Red Hat, Inc.
- *
- * File: ParaNdis6-Oid.c
- *
+/*
  * This file contains implementation of NDIS6 OID-related procedures.
  *
- * This work is licensed under the terms of the GNU GPL, version 2.  See
- * the COPYING file in the top-level directory.
+ * Copyright (c) 2008-2017 Red Hat, Inc.
  *
-**********************************************************************/
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met :
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and / or other materials provided with the distribution.
+ * 3. Neither the names of the copyright holders nor the names of their contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.IN NO EVENT SHALL THE COPYRIGHT HOLDERS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
 
 
 #include "ParaNdis-Oid.h"
 #include "ParaNdis6.h"
 #include "kdebugprint.h"
 #include "ParaNdis_DebugHistory.h"
+#include "netkvmmof.h"
+#include "Trace.h"
+#ifdef NETKVM_WPP_ENABLED
+#include "ParaNdis6-Oid.tmh"
+#endif
 
 static NDIS_IO_WORKITEM_FUNCTION OnSetPowerWorkItem;
 
@@ -43,6 +65,11 @@ static NDIS_STATUS OnSetInterruptModeration(PARANDIS_ADAPTER *pContext, tOidDesc
 static NDIS_STATUS OnSetOffloadParameters(PARANDIS_ADAPTER *pContext, tOidDesc *pOid);
 static NDIS_STATUS OnSetOffloadEncapsulation(PARANDIS_ADAPTER *pContext, tOidDesc *pOid);
 static NDIS_STATUS OnSetLinkParameters(PARANDIS_ADAPTER *pContext, tOidDesc *pOid);
+static NDIS_STATUS OnSetVendorSpecific1(PARANDIS_ADAPTER *pContext, tOidDesc *pOid);
+static NDIS_STATUS OnSetVendorSpecific2(PARANDIS_ADAPTER *pContext, tOidDesc *pOid);
+
+#define OID_VENDOR_1                    0xff010201
+#define OID_VENDOR_2                    0xff010202
 
 #if PARANDIS_SUPPORT_RSS
 
@@ -53,6 +80,8 @@ static NDIS_STATUS RSSSetParameters(PARANDIS_ADAPTER *pContext, tOidDesc *pOid)
     if (!pContext->bRSSOffloadSupported)
         return NDIS_STATUS_NOT_SUPPORTED;
 
+    CNdisPassiveWriteAutoLock autoLock(pContext->RSSParameters.rwLock);
+
     status = ParaNdis6_RSSSetParameters(&pContext->RSSParameters,
                                         (NDIS_RECEIVE_SCALE_PARAMETERS*) pOid->InformationBuffer,
                                         pOid->InformationBufferLength,
@@ -61,7 +90,7 @@ static NDIS_STATUS RSSSetParameters(PARANDIS_ADAPTER *pContext, tOidDesc *pOid)
     ParaNdis_ResetRxClassification(pContext);
     if (status != NDIS_STATUS_SUCCESS)
     {
-        DPrintf(0, ("[%s] - RSS parameters setting failed\n", __FUNCTION__));
+        DPrintf(0, "[%s] - RSS parameters setting failed\n", __FUNCTION__);
     }
 
     if (status == NDIS_STATUS_SUCCESS)
@@ -71,7 +100,7 @@ static NDIS_STATUS RSSSetParameters(PARANDIS_ADAPTER *pContext, tOidDesc *pOid)
 
     if (status != NDIS_STATUS_SUCCESS)
     {
-        DPrintf(0, ("[%s] - RSS to queue mapping setup failed\n", __FUNCTION__));
+        DPrintf(0, "[%s] - RSS to queue mapping setup failed\n", __FUNCTION__);
     }
 
     return status;
@@ -108,7 +137,6 @@ OIDENTRY(OID_GEN_MEDIA_SUPPORTED,               2,0,4, ohfQueryStat     ),
 OIDENTRY(OID_GEN_MEDIA_IN_USE,                  2,0,4, ohfQueryStat     ),
 OIDENTRY(OID_GEN_MAXIMUM_LOOKAHEAD,             2,0,4, ohfQuery         ),
 OIDENTRY(OID_GEN_MAXIMUM_FRAME_SIZE,            2,0,4, ohfQuery         ),
-OIDENTRY(OID_GEN_LINK_SPEED,                    2,0,4, ohfQuery         ),
 OIDENTRY(OID_GEN_TRANSMIT_BUFFER_SPACE,         2,0,4, ohfQueryStat     ),
 OIDENTRY(OID_GEN_RECEIVE_BUFFER_SPACE,          2,0,4, ohfQueryStat     ),
 OIDENTRY(OID_GEN_TRANSMIT_BLOCK_SIZE,           2,0,4, ohfQueryStat     ),
@@ -123,7 +151,8 @@ OIDENTRY(OID_GEN_PROTOCOL_OPTIONS,              2,0,4, 0                ),
 OIDENTRY(OID_GEN_MAC_OPTIONS,                   2,0,4, ohfQuery         ),
 OIDENTRY(OID_GEN_MAXIMUM_SEND_PACKETS,          2,0,4, ohfQueryStat     ),
 OIDENTRY(OID_GEN_VENDOR_DRIVER_VERSION,         2,0,4, ohfQueryStat     ),
-OIDENTRY(OID_GEN_SUPPORTED_GUIDS,               2,4,4, 0                ),
+OIDENTRY(OID_GEN_SUPPORTED_GUIDS,               2,4,4, ohfQueryStat     ),
+OIDENTRYPROC(OID_GEN_NETWORK_LAYER_ADDRESSES,   2,2,4, ohfSet,      ParaNdis_OnOidSetNetworkAddresses),
 OIDENTRY(OID_GEN_TRANSPORT_HEADER_OFFSET,       2,4,4, 0                ),
 OIDENTRY(OID_GEN_MEDIA_CAPABILITIES,            2,4,4, 0                ),
 OIDENTRY(OID_GEN_PHYSICAL_MEDIUM,               2,4,4, 0                ),
@@ -184,6 +213,8 @@ OIDENTRY(OID_IP4_OFFLOAD_STATS,                 4,4,4, 0),
 OIDENTRY(OID_IP6_OFFLOAD_STATS,                 4,4,4, 0),
 OIDENTRYPROC(OID_TCP_OFFLOAD_PARAMETERS,        0,0,0, ohfSet | ohfSetMoreOK | ohfSetLessOK, OnSetOffloadParameters),
 OIDENTRYPROC(OID_OFFLOAD_ENCAPSULATION,         0,0,0, ohfQuerySet, OnSetOffloadEncapsulation),
+OIDENTRYPROC(OID_VENDOR_1,                      0,0,0, ohfQueryStat | ohfSet | ohfSetMoreOK, OnSetVendorSpecific1),
+OIDENTRYPROC(OID_VENDOR_2,                      0,0,0, ohfQueryStat | ohfSet | ohfSetMoreOK, OnSetVendorSpecific2),
 
 #if PARANDIS_SUPPORT_RSS
     OIDENTRYPROC(OID_GEN_RECEIVE_SCALE_PARAMETERS,  0,0,0, ohfSet | ohfSetMoreOK, RSSSetParameters),
@@ -218,8 +249,6 @@ static NDIS_OID SupportedOids[] =
         OID_GEN_MEDIA_IN_USE,
         OID_GEN_MAXIMUM_LOOKAHEAD,
         OID_GEN_MAXIMUM_FRAME_SIZE,
-        OID_GEN_LINK_SPEED,
-        OID_GEN_LINK_SPEED_EX,
         OID_GEN_TRANSMIT_BUFFER_SPACE,
         OID_GEN_RECEIVE_BUFFER_SPACE,
         OID_GEN_TRANSMIT_BLOCK_SIZE,
@@ -234,6 +263,7 @@ static NDIS_OID SupportedOids[] =
         OID_GEN_MAC_OPTIONS,
         OID_GEN_MAXIMUM_SEND_PACKETS,
         OID_GEN_LINK_PARAMETERS,
+        OID_GEN_NETWORK_LAYER_ADDRESSES,
         OID_GEN_INTERRUPT_MODERATION,
         OID_GEN_XMIT_ERROR,
         OID_GEN_RCV_ERROR,
@@ -252,6 +282,12 @@ static NDIS_OID SupportedOids[] =
         OID_GEN_XMIT_OK,
         OID_GEN_RCV_OK,
         OID_GEN_VLAN_ID,
+#if NDIS_SUPPORT_NDIS61
+// disable WMI custom command on 2008 due to non-filtered NDIS test failure
+        OID_GEN_SUPPORTED_GUIDS,
+        OID_VENDOR_1,
+        OID_VENDOR_2,
+#endif
         OID_OFFLOAD_ENCAPSULATION,
         OID_TCP_OFFLOAD_PARAMETERS,
 #if PARANDIS_SUPPORT_RSS
@@ -263,6 +299,11 @@ static NDIS_OID SupportedOids[] =
 #endif
 };
 
+static const NDIS_GUID supportedGUIDs[]
+{
+    { NetKvm_LoggingGuid,    OID_VENDOR_1, NetKvm_Logging_SIZE, fNDIS_GUID_TO_OID | fNDIS_GUID_ALLOW_READ | fNDIS_GUID_ALLOW_WRITE },
+    { NetKvm_StatisticsGuid, OID_VENDOR_2, NetKvm_Statistics_SIZE, fNDIS_GUID_TO_OID | fNDIS_GUID_ALLOW_READ | fNDIS_GUID_ALLOW_WRITE }
+};
 
 /**********************************************************
         For statistics header
@@ -350,6 +391,26 @@ void ParaNdis6_GetSupportedOid(NDIS_MINIPORT_ADAPTER_GENERAL_ATTRIBUTES *pGenAtt
     pGenAttributes->SupportedStatistics = SupportedStatistics;
 }
 
+// WMI properties (set operation)
+static NDIS_STATUS OnSetVendorSpecific1(PARANDIS_ADAPTER *pContext, tOidDesc *pOid)
+{
+    NDIS_STATUS status = STATUS_SUCCESS;
+    UNREFERENCED_PARAMETER(pContext);
+    status = ParaNdis_OidSetCopy(pOid, &virtioDebugLevel, sizeof(virtioDebugLevel));
+    DPrintf(0, "DebugLevel => %d\n", virtioDebugLevel);
+    return status;
+}
+
+static NDIS_STATUS OnSetVendorSpecific2(PARANDIS_ADAPTER *pContext, tOidDesc *pOid)
+{
+    ULONG dummy = 0;
+    NDIS_STATUS status;
+    UNREFERENCED_PARAMETER(pContext);
+    status = ParaNdis_OidSetCopy(pOid, &dummy, sizeof(dummy));
+    RtlZeroMemory(&pContext->extraStatistics, sizeof(pContext->extraStatistics));
+    return status;
+}
+
 /*****************************************************************
 Handles NDIS6 specific OID, all the rest handled by common handler
 *****************************************************************/
@@ -371,32 +432,36 @@ static NDIS_STATUS ParaNdis_OidQuery(PARANDIS_ADAPTER *pContext, tOidDesc *pOid)
     PVOID pInfo  = NULL;
     ULONG ulSize = 0;
     BOOLEAN bFreeInfo = FALSE;
-    LONGLONG ul64LinkSpeed = 0;
+    NetKvm_Statistics wmiStatistics;
 
-#define SETINFO(field, value) pInfo = &u.field; ulSize = sizeof(u.field); u.field = (value)
+#define SETINFO(field, value) pInfo = &u.##field; ulSize = sizeof(u.##field); u.##field = (value)
     switch(pOid->Oid)
     {
-        case OID_GEN_LINK_SPEED:
-            {
-                /* units are 100 bps */
-                ul64LinkSpeed = PARANDIS_FORMAL_LINK_SPEED / 100;
-                pInfo = &ul64LinkSpeed;
-                ulSize = sizeof(ul64LinkSpeed);
-            }
-            break;
-        case OID_GEN_LINK_SPEED_EX:
-            {
-                ULONG64 speed = pContext->bConnected ? PARANDIS_FORMAL_LINK_SPEED : NDIS_LINK_SPEED_UNKNOWN;
-                u.LinkSpeed.RcvLinkSpeed = speed;
-                u.LinkSpeed.XmitLinkSpeed = speed;
-                pInfo = &u.LinkSpeed;
-                ulSize = sizeof(u.LinkSpeed);
-            }
-            break;
         case OID_GEN_STATISTICS:
             pInfo  = &pContext->Statistics;
             ulSize = sizeof(pContext->Statistics);
             break;
+        case OID_GEN_SUPPORTED_GUIDS:
+#if NDIS_SUPPORT_NDIS61
+            pInfo = (PVOID)&supportedGUIDs;
+            ulSize = sizeof(supportedGUIDs);
+#endif
+            break;
+        case OID_VENDOR_1:
+            pInfo = &virtioDebugLevel;
+            ulSize = sizeof(virtioDebugLevel);
+            break;
+        case OID_VENDOR_2:
+            pInfo = &wmiStatistics;
+            ulSize = sizeof(wmiStatistics);
+            wmiStatistics.txChecksumOffload = pContext->extraStatistics.framesCSOffload;
+            wmiStatistics.txLargeOffload = pContext->extraStatistics.framesLSO;
+            wmiStatistics.rxPriority = pContext->extraStatistics.framesRxPriority;
+            wmiStatistics.rxChecksumOK = pContext->extraStatistics.framesRxCSHwOK;
+            wmiStatistics.rxCoalescedWin = pContext->extraStatistics.framesCoalescedWindows;
+            wmiStatistics.rxCoalescedHost = pContext->extraStatistics.framesCoalescedHost;
+            break;
+
         case OID_GEN_INTERRUPT_MODERATION:
             u.InterruptModeration.Header.Type = NDIS_OBJECT_TYPE_DEFAULT;
             u.InterruptModeration.Header.Size = sizeof(u.InterruptModeration);
@@ -458,11 +523,11 @@ NDIS_STATUS ParaNdis6_OidRequest(
     _oid.ulToDoFlags = Rules.Flags;
 
     ParaNdis_DebugHistory(pContext, hopOidRequest, NULL, pNdisRequest->DATA.SET_INFORMATION.Oid, pNdisRequest->RequestType, 1);
-    DPrintf(Rules.nEntryLevel, ("[%s] OID type %d, id 0x%X(%s) of %d\n", __FUNCTION__,
+    DPrintf(Rules.nEntryLevel, "[%s] OID type %d, id 0x%X(%s) of %d\n", __FUNCTION__,
                 pNdisRequest->RequestType,
                 pNdisRequest->DATA.SET_INFORMATION.Oid,
                 Rules.name,
-                pNdisRequest->DATA.SET_INFORMATION.InformationBufferLength));
+                pNdisRequest->DATA.SET_INFORMATION.InformationBufferLength);
 
     if (pContext->bSurprizeRemoved) status = NDIS_STATUS_NOT_ACCEPTED;
     else switch(pNdisRequest->RequestType)
@@ -505,13 +570,13 @@ NDIS_STATUS ParaNdis6_OidRequest(
                 }
                 else
                 {
-                    DPrintf(0, ("Error: Inconsistent OIDDB, oid %s\n", Rules.name));
+                    DPrintf(0, "Error: Inconsistent OIDDB, oid %s\n", Rules.name);
                 }
             }
             break;
         default:
-            DPrintf(Rules.nExitFailLevel, ("Error: Unsupported OID type %d, id 0x%X(%s)\n",
-                pNdisRequest->RequestType, Rules.oid, Rules.name));
+            DPrintf(Rules.nExitFailLevel, "Error: Unsupported OID type %d, id 0x%X(%s)\n",
+                pNdisRequest->RequestType, Rules.oid, Rules.name);
             status = NDIS_STATUS_NOT_SUPPORTED;
             break;
     }
@@ -519,8 +584,8 @@ NDIS_STATUS ParaNdis6_OidRequest(
     if (status != NDIS_STATUS_PENDING)
     {
         DPrintf(((status != NDIS_STATUS_SUCCESS) ? Rules.nExitFailLevel : Rules.nExitOKLevel),
-            ("[%s] OID type %d, id 0x%X(%s) (%X)\n", __FUNCTION__,
-            pNdisRequest->RequestType, Rules.oid, Rules.name, status));
+            "[%s] OID type %d, id 0x%X(%s) (%X)\n", __FUNCTION__,
+            pNdisRequest->RequestType, Rules.oid, Rules.name, status);
     }
     return status;
 }
@@ -553,12 +618,12 @@ static void OnSetPowerWorkItem(PVOID  WorkItemContext, NDIS_HANDLE  NdisIoWorkIt
 
         KeQueryTickCount(&TickCount);
         NdisGetCurrentSystemTime(&SysTime);
-        DPrintf(0, ("\n%s>> CPU #%d, perf-counter %I64d, tick count %I64d, NDIS_sys_time %I64d\n", __FUNCTION__, KeGetCurrentProcessorNumber(), KeQueryPerformanceCounter(NULL).QuadPart,TickCount.QuadPart, SysTime.QuadPart));
+        DPrintf(0, "\n%s>> CPU #%d, perf-counter %I64d, tick count %I64d, NDIS_sys_time %I64d\n", __FUNCTION__, KeGetCurrentProcessorNumber(), KeQueryPerformanceCounter(NULL).QuadPart,TickCount.QuadPart, SysTime.QuadPart);
     #endif
 
         if (pwi->state == NetDeviceStateD0)
         {
-            ParaNdis_PowerOn(pContext);
+            status = ParaNdis_PowerOn(pContext);
         }
         else
         {
@@ -585,7 +650,7 @@ NDIS_STATUS ParaNdis_OnSetPower(PARANDIS_ADAPTER *pContext, tOidDesc *pOid)
 
     KeQueryTickCount(&TickCount);
     NdisGetCurrentSystemTime(&SysTime);
-    DPrintf(0, ("\n%s>> CPU #%d, perf-counter %I64d, tick count %I64d, NDIS_sys_time %I64d\n", __FUNCTION__, KeGetCurrentProcessorNumber(), KeQueryPerformanceCounter(NULL).QuadPart,TickCount.QuadPart, SysTime.QuadPart));
+    DPrintf(0, "\n%s>> CPU #%d, perf-counter %I64d, tick count %I64d, NDIS_sys_time %I64d\n", __FUNCTION__, KeGetCurrentProcessorNumber(), KeQueryPerformanceCounter(NULL).QuadPart,TickCount.QuadPart, SysTime.QuadPart);
 #endif
 
     DEBUG_ENTRY(0);
@@ -618,23 +683,23 @@ static void DumpOffloadStructure(NDIS_OFFLOAD *po, LPCSTR message)
 {
     int level = 1;
     ULONG *pul;
-    DPrintf(level, ("[%s](%s)\n", __FUNCTION__, message));
+    DPrintf(level, "[%s](%s)\n", __FUNCTION__, message);
     pul = (ULONG *)&po->Checksum.IPv4Transmit;
-    DPrintf(level, ("CSV4TX:(%d,%d)\n", pul[0], pul[1]));
+    DPrintf(level, "CSV4TX:(%d,%d)\n", pul[0], pul[1]);
     pul = (ULONG *)&po->Checksum.IPv4Receive;
-    DPrintf(level, ("CSV4RX:(%d,%d)\n", pul[0], pul[1]));
+    DPrintf(level, "CSV4RX:(%d,%d)\n", pul[0], pul[1]);
     pul = (ULONG *)&po->Checksum.IPv6Transmit;
-    DPrintf(level, ("CSV6TX:(%d,%d)\n", pul[0], pul[1], pul[2], pul[3], pul[4]));
+    DPrintf(level, "CSV6TX:(%d,%d,%d,%d,%d)\n", pul[0], pul[1], pul[2], pul[3], pul[4]);
     pul = (ULONG *)&po->Checksum.IPv6Receive;
-    DPrintf(level, ("CSV6RX:(%d,%d)\n", pul[0], pul[1], pul[2], pul[3], pul[4]));
+    DPrintf(level, "CSV6RX:(%d,%d,%d,%d,%d)\n", pul[0], pul[1], pul[2], pul[3], pul[4]);
     pul = (ULONG *)&po->LsoV1;
-    DPrintf(level, ("LSOV1 :(%d,%d,%d,%d)\n", pul[0], pul[1], pul[2], pul[3]));
+    DPrintf(level, "LSOV1 :(%d,%d,%d,%d)\n", pul[0], pul[1], pul[2], pul[3]);
     pul = (ULONG *)&po->LsoV2.IPv4;
-    DPrintf(level, ("LSO4V2:(%d,%d,%d)\n", pul[0], pul[1], pul[2]));
+    DPrintf(level, "LSO4V2:(%d,%d,%d)\n", pul[0], pul[1], pul[2]);
     pul = (ULONG *)&po->LsoV2.IPv6;
-    DPrintf(level, ("LSO6V2:(%d,%d,%d,%d)\n", pul[0], pul[1], pul[2], pul[3]));
+    DPrintf(level, "LSO6V2:(%d,%d,%d,%d)\n", pul[0], pul[1], pul[2], pul[3]);
 #ifdef PARANDIS_SUPPORT_RSC
-    DPrintf(level, ("RSC:(v4: %d, v6: %d)\n", po->Rsc.IPv4, po->Rsc.IPv6));
+    DPrintf(level, "RSC:(IPv4: Enabled=%ul, IPv6: Enabled=%ul)\n", po->Rsc.IPv4.Enabled, po->Rsc.IPv6.Enabled);
 #endif
 }
 
@@ -701,8 +766,8 @@ void ParaNdis6_FillOffloadConfiguration(PARANDIS_ADAPTER *pContext)
     NDIS_OFFLOAD *po = &pContext->ReportedOffloadConfiguration;
     FillOffloadStructure(po, pContext->Offload.flags);
 #if PARANDIS_SUPPORT_RSC
-    po->Rsc.IPv4.Enabled = (pContext->RSC.bIPv4SupportedSW && pContext->RSC.bIPv4SupportedHW);
-    po->Rsc.IPv6.Enabled = (pContext->RSC.bIPv6SupportedSW && pContext->RSC.bIPv6SupportedHW);
+    po->Rsc.IPv4.Enabled = pContext->RSC.bIPv4Enabled;
+    po->Rsc.IPv6.Enabled = pContext->RSC.bIPv6Enabled;
 #endif
 }
 
@@ -764,7 +829,7 @@ static void BuildOffloadStatusReport(
 {
     // see
 #if 1
-#define SYNC_STRUCT(_struct, field) update->_struct.field = (Current->_struct.field == NDIS_OFFLOAD_SUPPORTED) ? NDIS_OFFLOAD_SET_ON : NDIS_OFFLOAD_SET_OFF
+#define SYNC_STRUCT(_struct, field) update->##_struct.##field = (Current->##_struct.##field == NDIS_OFFLOAD_SUPPORTED) ? NDIS_OFFLOAD_SET_ON : NDIS_OFFLOAD_SET_OFF
 #define SYNC_FIELD_TX4(field) SYNC_STRUCT(IPv4Transmit,field)
 #define SYNC_FIELD_RX4(field) SYNC_STRUCT(IPv4Receive,field)
 #define SYNC_FIELD_TX6(field) SYNC_STRUCT(IPv6Transmit,field)
@@ -842,7 +907,7 @@ static void SendOffloadStatusIndication(PARANDIS_ADAPTER *pContext)
         indication.RequestId = pRequest->RequestId;
         indication.DestinationHandle = pRequest->RequestHandle;
     }
-    DPrintf(0, ("Indicating offload change"));
+    DPrintf(0, "Indicating offload change");
     NdisMIndicateStatusEx(pContext->MiniportHandle , &indication);
 }
 
@@ -857,10 +922,10 @@ static ULONG SetOffloadField(
 {
     if (!*pbFailed)
     {
-        DPrintf(0, ("[%s] IN %s %s: current=%d Supported %s Requested %s\n",
+        DPrintf(0, "[%s] IN %s %s: current=%d Supported %s Requested %s\n",
                 __FUNCTION__, name, isTx? "TX" : "RX", current,
                 MakeTxRxString(isSupportedTx, isSupportedRx),
-                MakeOffloadParameterString(TxRxValue)));
+                MakeOffloadParameterString(TxRxValue));
 
         switch(TxRxValue)
         {
@@ -906,7 +971,7 @@ static ULONG SetOffloadField(
             break;
         }
 
-        DPrintf(0, ("[%s] OUT %s %s: new=%d (%saccepted)\n", __FUNCTION__, name, isTx? "TX" : "RX", current, *pbFailed ? "NOT " : ""));
+        DPrintf(0, "[%s] OUT %s %s: new=%d (%saccepted)\n", __FUNCTION__, name, isTx? "TX" : "RX", current, *pbFailed ? "NOT " : "");
     }
     return current;
 }
@@ -919,13 +984,13 @@ static NDIS_STATUS ApplyOffloadConfiguration(PARANDIS_ADAPTER *pContext,
     tOffloadSettingsFlags fPresent = pContext->Offload.flags;
     tOffloadSettingsFlags *pf = &fPresent;
 
-    DPrintf(0, ("[%s] Requested: V4:IPCS=%s,TCPCS=%s,UDPCS=%s V6:TCPCS=%s,UDPCS=%s\n",
+    DPrintf(0, "[%s] Requested: V4:IPCS=%s,TCPCS=%s,UDPCS=%s V6:TCPCS=%s,UDPCS=%s\n",
                 __FUNCTION__,
                 MakeOffloadParameterString(pop->IPv4Checksum),
                 MakeOffloadParameterString(pop->TCPIPv4Checksum),
                 MakeOffloadParameterString(pop->UDPIPv4Checksum),
                 MakeOffloadParameterString(pop->TCPIPv6Checksum),
-                MakeOffloadParameterString(pop->UDPIPv6Checksum)));
+                MakeOffloadParameterString(pop->UDPIPv6Checksum));
 
     ParaNdis_ResetOffloadSettings(pContext, &fSupported, NULL);
     pf->fTxIPChecksum = SetOffloadField("TxIPChecksum", TRUE,
@@ -968,12 +1033,12 @@ static NDIS_STATUS ApplyOffloadConfiguration(PARANDIS_ADAPTER *pContext,
         fSupported.fRxUDPv6Checksum, pop->UDPIPv6Checksum, &bFailed);
 
 
-    DPrintf(0, ("[%s] Result: TCPv4:%s,UDPv4:%s,IPCS:%s TCPv6:%s,UDPv6:%s\n", __FUNCTION__,
+    DPrintf(0, "[%s] Result: TCPv4:%s,UDPv4:%s,IPCS:%s TCPv6:%s,UDPv6:%s\n", __FUNCTION__,
         MakeTxRxString(pf->fTxTCPChecksum, pf->fRxTCPChecksum),
         MakeTxRxString(pf->fTxUDPChecksum, pf->fRxUDPChecksum),
         MakeTxRxString(pf->fTxIPChecksum, pf->fRxIPChecksum),
         MakeTxRxString(pf->fTxTCPv6Checksum, pf->fRxTCPv6Checksum),
-        MakeTxRxString(pf->fTxUDPv6Checksum, pf->fRxUDPv6Checksum))
+        MakeTxRxString(pf->fTxUDPv6Checksum, pf->fRxUDPv6Checksum)
         );
 
     if (NDIS_OFFLOAD_PARAMETERS_LSOV1_DISABLED == pop->LsoV1 || NDIS_OFFLOAD_PARAMETERS_LSOV2_DISABLED == pop->LsoV2IPv4)
@@ -982,7 +1047,6 @@ static NDIS_STATUS ApplyOffloadConfiguration(PARANDIS_ADAPTER *pContext,
     }
     else if (NDIS_OFFLOAD_PARAMETERS_LSOV1_ENABLED == pop->LsoV1 || NDIS_OFFLOAD_PARAMETERS_LSOV2_ENABLED  == pop->LsoV2IPv4)
     {
-        #pragma warning(suppress: 4463)
         if (fSupported.fTxLso) pf->fTxLso = 1;
         else
             bFailed = TRUE;
@@ -994,7 +1058,6 @@ static NDIS_STATUS ApplyOffloadConfiguration(PARANDIS_ADAPTER *pContext,
     }
     else if (NDIS_OFFLOAD_PARAMETERS_LSOV2_ENABLED  == pop->LsoV2IPv6)
     {
-        #pragma warning(suppress: 4463)
         if (fSupported.fTxLsov6) pf->fTxLsov6 = 1;
         else
             bFailed = TRUE;
@@ -1009,8 +1072,8 @@ static NDIS_STATUS ApplyOffloadConfiguration(PARANDIS_ADAPTER *pContext,
         bFailed = TRUE;
     }
 
-    DPrintf(0, ("[%s] Result: LSO: v4 %d, v6 %d\n", __FUNCTION__, pf->fTxLso, pf->fTxLsov6));
-    DPrintf(0, ("[%s] Final: the request %saccepted\n", __FUNCTION__, bFailed ? "NOT " : ""));
+    DPrintf(0, "[%s] Result: LSO: v4 %d, v6 %d\n", __FUNCTION__, pf->fTxLso, pf->fTxLsov6);
+    DPrintf(0, "[%s] Final: the request %saccepted\n", __FUNCTION__, bFailed ? "NOT " : "");
 
     if (bFailed && pOid)
         return NDIS_STATUS_INVALID_PARAMETER;
@@ -1034,11 +1097,15 @@ NDIS_STATUS OnSetRSCParameters(PPARANDIS_ADAPTER pContext, PNDIS_OFFLOAD_PARAMET
         return NDIS_STATUS_SUCCESS;
 
     if((op->RscIPv4 != NDIS_OFFLOAD_PARAMETERS_NO_CHANGE) &&
-        (!pContext->RSC.bIPv4SupportedSW || !pContext->RSC.bIPv4SupportedHW))
+        (!pContext->RSC.bIPv4SupportedSW ||
+         !pContext->RSC.bIPv4SupportedHW ||
+         !pContext->RSC.bHasDynamicConfig))
         return NDIS_STATUS_NOT_SUPPORTED;
 
     if((op->RscIPv6 != NDIS_OFFLOAD_PARAMETERS_NO_CHANGE) &&
-        (!pContext->RSC.bIPv6SupportedSW || !pContext->RSC.bIPv6SupportedHW))
+        (!pContext->RSC.bIPv6SupportedSW ||
+         !pContext->RSC.bIPv6SupportedHW ||
+         !pContext->RSC.bHasDynamicConfig))
         return NDIS_STATUS_NOT_SUPPORTED;
 
     if(op->RscIPv4 != NDIS_OFFLOAD_PARAMETERS_NO_CHANGE)
@@ -1047,9 +1114,21 @@ NDIS_STATUS OnSetRSCParameters(PPARANDIS_ADAPTER pContext, PNDIS_OFFLOAD_PARAMET
     if(op->RscIPv6 != NDIS_OFFLOAD_PARAMETERS_NO_CHANGE)
         pContext->RSC.bIPv6Enabled = (op->RscIPv6 == NDIS_OFFLOAD_PARAMETERS_RSC_ENABLED);
 
+    if (op->RscIPv4 != NDIS_OFFLOAD_PARAMETERS_NO_CHANGE && pContext->RSC.bIPv4SupportedQEMU)
+    {
+        pContext->RSC.bIPv4EnabledQEMU = (op->RscIPv4 == NDIS_OFFLOAD_PARAMETERS_RSC_ENABLED);
+    }
+
+    if (op->RscIPv6 != NDIS_OFFLOAD_PARAMETERS_NO_CHANGE && pContext->RSC.bIPv6SupportedQEMU)
+    {
+        pContext->RSC.bIPv6EnabledQEMU = (op->RscIPv6 == NDIS_OFFLOAD_PARAMETERS_RSC_ENABLED);
+    }
+
     GuestOffloads = 1 << VIRTIO_NET_F_GUEST_CSUM                                        |
                     ((pContext->RSC.bIPv4Enabled) ? (1 << VIRTIO_NET_F_GUEST_TSO4) : 0) |
-                    ((pContext->RSC.bIPv6Enabled) ? (1 << VIRTIO_NET_F_GUEST_TSO6) : 0);
+                    ((pContext->RSC.bIPv6Enabled) ? (1 << VIRTIO_NET_F_GUEST_TSO6) : 0) |
+                    ((pContext->RSC.bIPv4EnabledQEMU) ? ((UINT64)1 << VIRTIO_NET_F_GUEST_RSC4) : 0) |
+                    ((pContext->RSC.bIPv6EnabledQEMU) ? ((UINT64)1 << VIRTIO_NET_F_GUEST_RSC6) : 0);
 
     ParaNdis_UpdateGuestOffloads(pContext, GuestOffloads);
 #else
@@ -1117,8 +1196,8 @@ NDIS_STATUS OnSetOffloadEncapsulation(PARANDIS_ADAPTER *pContext, tOidDesc *pOid
     {
         ULONG *pul = (ULONG *)&encaps;
         status = NDIS_STATUS_INVALID_PARAMETER;
-        DPrintf(1, ("[%s] %08lX, %08lX, %08lX, %08lX, %08lX, %08lX, %08lX\n", __FUNCTION__,
-                pul[0],pul[1],pul[2],pul[3],pul[4],pul[5],pul[6]));
+        DPrintf(1, "[%s] %08lX, %08lX, %08lX, %08lX, %08lX, %08lX, %08lX\n", __FUNCTION__,
+                pul[0],pul[1],pul[2],pul[3],pul[4],pul[5],pul[6]);
         if (encaps.Header.Size == sizeof(encaps) &&
             encaps.Header.Revision == NDIS_OFFLOAD_ENCAPSULATION_REVISION_1 &&
             encaps.Header.Type == NDIS_OBJECT_TYPE_OFFLOAD_ENCAPSULATION &&
@@ -1126,14 +1205,14 @@ NDIS_STATUS OnSetOffloadEncapsulation(PARANDIS_ADAPTER *pContext, tOidDesc *pOid
             (encaps.IPv6.Enabled != NDIS_OFFLOAD_SET_ON || (encaps.IPv6.EncapsulationType & NDIS_ENCAPSULATION_IEEE_802_3))
             )
          {
-            DPrintf(0, ("[%s] V4 types 0x%lX, header %d, enabled %d\n", __FUNCTION__,
+            DPrintf(0, "[%s] V4 types 0x%lX, header %d, enabled %d\n", __FUNCTION__,
                 encaps.IPv4.EncapsulationType,
                 encaps.IPv4.HeaderSize,
-                encaps.IPv4.Enabled));
-            DPrintf(0, ("[%s] V6 types 0x%lX, header %d, enabled %d\n", __FUNCTION__,
+                encaps.IPv4.Enabled);
+            DPrintf(0, "[%s] V6 types 0x%lX, header %d, enabled %d\n", __FUNCTION__,
                 encaps.IPv6.EncapsulationType,
                 encaps.IPv6.HeaderSize,
-                encaps.IPv6.Enabled));
+                encaps.IPv6.Enabled);
 
             if (encaps.IPv4.Enabled == NDIS_OFFLOAD_SET_ON && encaps.IPv6.Enabled == NDIS_OFFLOAD_SET_ON && 
                 encaps.IPv6.HeaderSize == encaps.IPv4.HeaderSize)
@@ -1240,10 +1319,10 @@ NDIS_STATUS OnSetLinkParameters(PARANDIS_ADAPTER *pContext, tOidDesc *pOid)
     if (status == NDIS_STATUS_SUCCESS)
     {
         status = NDIS_STATUS_NOT_ACCEPTED;
-        DPrintf(0, ("[%s] requested:\n", __FUNCTION__));
-        DPrintf(0, ("Tx speed 0x%X, Rx speed 0x%X\n", params.XmitLinkSpeed, params.RcvLinkSpeed));
-        DPrintf(0, ("Duplex %d, PauseFn %d, AutoNeg 0x%X\n",
-            params.MediaDuplexState, params.PauseFunctions, params.AutoNegotiationFlags));
+        DPrintf(0, "[%s] requested:\n", __FUNCTION__);
+        DPrintf(0, "Tx speed 0x%llx, Rx speed 0x%llx\n", params.XmitLinkSpeed, params.RcvLinkSpeed);
+        DPrintf(0, "Duplex %d, PauseFn %d, AutoNeg 0x%X\n",
+            params.MediaDuplexState, params.PauseFunctions, params.AutoNegotiationFlags);
     }
     return status;
 }

@@ -1,18 +1,33 @@
-/**********************************************************************
- * Copyright (c) 2008-2015 Red Hat, Inc.
- *
- * File: ParaNdis-Impl.c
- *
+/*
  * This file contains NDIS5.X Implementation of adapter driver procedures.
  *
- * This work is licensed under the terms of the GNU GPL, version 2.  See
- * the COPYING file in the top-level directory.
+ * Copyright (c) 2008-2017 Red Hat, Inc.
  *
-**********************************************************************/
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met :
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and / or other materials provided with the distribution.
+ * 3. Neither the names of the copyright holders nor the names of their contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.IN NO EVENT SHALL THE COPYRIGHT HOLDERS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
 #include "ParaNdis5.h"
 
-
-#if defined(NDIS51_MINIPORT) || defined(NDIS50_MINIPORT)
 
 #ifdef WPP_EVENT_TRACING
 #include "ParaNdis5-Impl.tmh"
@@ -200,10 +215,8 @@ Parameters:
     tCompletePhysicalAddress *pAddresses
             the structure accumulates all our knowledge
             about the allocation (size, addresses, cacheability etc)
-            filled by ParaNdis_InitialAllocatePhysicalMemory or
-            by ParaNdis_RuntimeRequestToAllocatePhysicalMemory
+            filled by ParaNdis_InitialAllocatePhysicalMemory
 ***********************************************************/
-
 VOID ParaNdis_FreePhysicalMemory(
     PARANDIS_ADAPTER *pContext,
     tCompletePhysicalAddress *pAddresses)
@@ -457,7 +470,6 @@ tPacketIndicationType ParaNdis_IndicateReceivedPacket(
     pIONetDescriptor pBuffersDesc)
 {
     BOOLEAN b = FALSE;
-    NDIS_STATUS status;
     PNDIS_BUFFER    pBuffer = NULL;
     PNDIS_BUFFER    pNoBuffer = NULL;
     PNDIS_PACKET    Packet = pBuffersDesc->pHolder;
@@ -594,7 +606,7 @@ static void CompletePacket(PARANDIS_ADAPTER *pContext, PNDIS_PACKET Packet)
 Copy data from specified packet to VirtIO buffer, minimum 60 bytes
 Parameters:
     PNDIS_PACKET Packet     packet to copy data from
-    PVOID dest              desctination to copy
+    PVOID dest              destination to copy
     ULONG maxSize           maximal size of destination
 Return value:
     size = number of bytes copied
@@ -781,7 +793,7 @@ VOID ParaNdis_PacketMapper(
         {
             // we replace 1 or more HW buffers with one buffer preallocated for data
             buffers->physAddr = pDesc->DataInfo.Physical;
-            buffers->ulSize   = lengthPut;
+            buffers->length   = lengthPut;
             pMapperResult->usBufferSpaceUsed = (USHORT)lengthPut;
             pMapperResult->ulDataSize += lengthGet;
             pMapperResult->usBuffersMapped = (USHORT)(pSGList->NumberOfElements - nCompleteBuffersToSkip + 1);
@@ -800,16 +812,16 @@ VOID ParaNdis_PacketMapper(
             if (nBytesSkipInFirstBuffer)
             {
                 buffers->physAddr.QuadPart = pSGElements->Address.QuadPart + nBytesSkipInFirstBuffer;
-                buffers->ulSize   = pSGElements->Length - nBytesSkipInFirstBuffer;
+                buffers->length   = pSGElements->Length - nBytesSkipInFirstBuffer;
                 DPrintf(2, ("[%s] using HW buffer %d of %d-%d", __FUNCTION__, i, pSGElements->Length, nBytesSkipInFirstBuffer));
                 nBytesSkipInFirstBuffer = 0;
             }
             else
             {
                 buffers->physAddr = pSGElements->Address;
-                buffers->ulSize   = pSGElements->Length;
+                buffers->length   = pSGElements->Length;
             }
-            pMapperResult->ulDataSize += buffers->ulSize;
+            pMapperResult->ulDataSize += buffers->length;
             pSGElements++;
             buffers++;
         }
@@ -902,7 +914,7 @@ static void InitializeTransferParameters(tTxOperationParameters *pParams, tSendE
     NdisQueryPacket(pEntry->packet, &pParams->nofSGFragments, NULL, NULL, &pParams->ulDataSize);
     pParams->ReferenceValue = pEntry;
     pParams->packet = pEntry->packet;
-    pParams->offloalMss = (pEntry->flags & SEND_ENTRY_TSO_USED) ? pEntry->ipTransferUnit : 0;
+    pParams->offloadMss = (pEntry->flags & SEND_ENTRY_TSO_USED) ? pEntry->ipTransferUnit : 0;
     // on NDIS5 it is unknown
     pParams->tcpHeaderOffset = 0;
     // fills only if SGList present in the packet
@@ -1008,9 +1020,9 @@ BOOLEAN ParaNdis_ProcessTx(
         else
         {
 #ifdef PARANDIS_TEST_TX_KICK_ALWAYS
-            pContext->NetSendQueue->vq_ops->kick_always(pContext->NetSendQueue);
+            virtqueue_kick_always(pContext->NetSendQueue);
 #else
-            pContext->NetSendQueue->vq_ops->kick(pContext->NetSendQueue);
+            virtqueue_kick(pContext->NetSendQueue);
 #endif
         }
         DPrintf(2, ("[%s] sent down %d p.(%d b.)", __FUNCTION__, nBuffersSent, nBytesSent));
@@ -1463,5 +1475,3 @@ BOOLEAN ParaNdis_SynchronizeWithInterrupt(
     SyncContext.Parameter = parameter;
     return NdisMSynchronizeWithInterrupt(&pContext->Interrupt, procedure, &SyncContext);
 }
-
-#endif //defined(NDIS51_MINIPORT) || defined(NDIS50_MINIPORT)

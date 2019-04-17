@@ -26,7 +26,7 @@ VIOSerialSendCtrlMsg(
     UINT len;
     PPORTS_DEVICE pContext = GetPortsDevice(Device);
     VIRTIO_CONSOLE_CONTROL cpkt;
-    int cnt = 0;
+
     if (!pContext->isHostMultiport)
     {
         return;
@@ -43,23 +43,20 @@ VIOSerialSendCtrlMsg(
     sg.physAddr = MmGetPhysicalAddress(&cpkt);
     sg.length = sizeof(cpkt);
 
-    WdfSpinLockAcquire(pContext->CVqLock);
+    WdfWaitLockAcquire(pContext->COutVqLock, NULL);
     if(0 <= virtqueue_add_buf(vq, &sg, 1, 0, &cpkt, NULL, 0))
     {
         virtqueue_kick(vq);
         while(!virtqueue_get_buf(vq, &len))
         {
-           KeStallExecutionProcessor(50);
-           if(++cnt > RETRY_THRESHOLD)
-           {
-              TraceEvents(TRACE_LEVEL_FATAL, DBG_PNP, "<-> %s retries = %d\n", __FUNCTION__, cnt);
-              break;
-           }
+            LARGE_INTEGER interval;
+            interval.QuadPart = -1;
+            KeDelayExecutionThread(KernelMode, FALSE, &interval);
         }
     }
-    WdfSpinLockRelease(pContext->CVqLock);
+    WdfWaitLockRelease(pContext->COutVqLock);
 
-    TraceEvents(TRACE_LEVEL_INFORMATION, DBG_PNP, "<-- %s cnt = %d\n", __FUNCTION__, cnt);
+    TraceEvents(TRACE_LEVEL_INFORMATION, DBG_PNP, "<-- %s\n", __FUNCTION__);
 }
 
 VOID
@@ -78,15 +75,15 @@ VIOSerialCtrlWorkHandler(
     vq = pContext->c_ivq;
     ASSERT(vq);
 
-    WdfSpinLockAcquire(pContext->CVqLock);
+    WdfSpinLockAcquire(pContext->CInVqLock);
     while ((buf = virtqueue_get_buf(vq, &len)))
     {
-        WdfSpinLockRelease(pContext->CVqLock);
+        WdfSpinLockRelease(pContext->CInVqLock);
         buf->len = len;
         buf->offset = 0;
         VIOSerialHandleCtrlMsg(Device, buf);
 
-        WdfSpinLockAcquire(pContext->CVqLock);
+        WdfSpinLockAcquire(pContext->CInVqLock);
         status = VIOSerialAddInBuf(vq, buf);
         if (!NT_SUCCESS(status))
         {
@@ -95,7 +92,7 @@ VIOSerialCtrlWorkHandler(
         }
     }
     TraceEvents(TRACE_LEVEL_VERBOSE, DBG_PNP, "<-- %s\n", __FUNCTION__);
-    WdfSpinLockRelease(pContext->CVqLock);
+    WdfSpinLockRelease(pContext->CInVqLock);
 }
 
 VOID
@@ -116,7 +113,7 @@ VIOSerialHandleCtrlMsg(
 
     if (!port && (cpkt->event != VIRTIO_CONSOLE_PORT_ADD))
     {
-        TraceEvents(TRACE_LEVEL_INFORMATION, DBG_PNP, "Invlid index %u in control packet\n", cpkt->id);
+        TraceEvents(TRACE_LEVEL_INFORMATION, DBG_PNP, "Invalid index %u in control packet\n", cpkt->id);
     }
 
     switch (cpkt->event)
@@ -150,7 +147,7 @@ VIOSerialHandleCtrlMsg(
                        "VIRTIO_CONSOLE_CONSOLE_PORT id = %d value = %u\n", cpkt->id, cpkt->value);
            if (cpkt->value)
            {
-              VIOSerialInitPortConsole(port);
+              VIOSerialInitPortConsole(Device,port);
            }
         break;
 

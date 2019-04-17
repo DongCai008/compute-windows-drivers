@@ -1,15 +1,38 @@
-/**********************************************************************
- * Copyright (c) 2008-2015 Red Hat, Inc.
- *
- * File: ParaNdis6-Debug.c
- *
+/*
  * This file contains debug support procedures, common for NDIS5 and NDIS6
  *
- * This work is licensed under the terms of the GNU GPL, version 2.  See
- * the COPYING file in the top-level directory.
+ * Copyright (c) 2008-2017 Red Hat, Inc.
  *
-**********************************************************************/
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met :
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and / or other materials provided with the distribution.
+ * 3. Neither the names of the copyright holders nor the names of their contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.IN NO EVENT SHALL THE COPYRIGHT HOLDERS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
 #include "ndis56common.h"
+#include "ParaNdis_DebugHistory.h"
+#include "Trace.h"
+#ifdef NETKVM_WPP_ENABLED
+#include "ParaNdis-Debug.tmh"
+#endif
+
 
 extern "C"
 {
@@ -114,12 +137,11 @@ static void NetKVMDebugPrint(const char *fmt, ...)
         }
     }
 #endif
+    va_end(list);
 }
 
 tDebugPrintFunc VirtioDebugPrintProc = NetKVMDebugPrint;
 
-#pragma warning (push)
-#pragma warning (disable:4055)
 void ParaNdis_DebugInitialize()
 {
     NDIS_STRING usRegister, usDeregister, usPrint;
@@ -142,9 +164,8 @@ void ParaNdis_DebugInitialize()
         BugCheckDeregisterCallback = (KeDeregisterBugCheckReasonCallbackType)pd;
     }
     res = BugCheckRegisterCallback(&CallbackRecord, ParaNdis_OnBugCheck, KbCallbackSecondaryDumpData, (const PUCHAR)"NetKvm");
-    DPrintf(0, ("[%s] Crash callback %sregistered\n", __FUNCTION__, res ? "" : "NOT "));
+    DPrintf(0, "[%s] Crash callback %sregistered\n", __FUNCTION__, res ? "" : "NOT ");
 }
-#pragma warning (pop)
 
 void ParaNdis_DebugCleanup(PDRIVER_OBJECT  pDriverObject)
 {
@@ -155,17 +176,29 @@ void ParaNdis_DebugCleanup(PDRIVER_OBJECT  pDriverObject)
 
 
 #define MAX_CONTEXTS    4
+
 #if defined(ENABLE_HISTORY_LOG)
 #define MAX_HISTORY     0x40000
 #else
 #define MAX_HISTORY     2
 #endif
+
+#if defined(KEEP_PENDING_NBL)
+#define MAX_KEEP_NBLS   1024
+#else
+#define MAX_KEEP_NBLS   1
+#endif
+
 typedef struct _tagBugCheckStaticData
 {
     tBugCheckStaticDataHeader Header;
     tBugCheckPerNicDataContent PerNicData[MAX_CONTEXTS];
     tBugCheckStaticDataContent Data;
     tBugCheckHistoryDataEntry  History[MAX_HISTORY];
+
+    RTL_BITMAP          PendingNblsBitmap;
+    ULONG               PendingNblsBitmapBuffer[MAX_KEEP_NBLS/32 + !!(MAX_KEEP_NBLS%32)];
+    tPendingNBlEntry    PendingNbls[MAX_KEEP_NBLS];
 }tBugCheckStaticData;
 
 
@@ -187,12 +220,16 @@ VOID ParaNdis_PrepareBugCheckData()
     BugCheckData.StaticData.Header.PerNicData = (UINT_PTR)(PVOID)BugCheckData.StaticData.PerNicData;
     BugCheckData.StaticData.Header.DataArea = (UINT64)&BugCheckData.StaticData.Data;
     BugCheckData.StaticData.Header.DataAreaSize = sizeof(BugCheckData.StaticData.Data);
-    BugCheckData.StaticData.Data.HistoryDataVersion = PARANDIS_DEBUG_HISTORY_DATA_VERSION;
-    BugCheckData.StaticData.Data.SizeOfHistory = MAX_HISTORY;
-    BugCheckData.StaticData.Data.SizeOfHistoryEntry = sizeof(tBugCheckHistoryDataEntry);
-    BugCheckData.StaticData.Data.HistoryData = (UINT_PTR)(PVOID)BugCheckData.StaticData.History;
+    BugCheckData.StaticData.Data.StaticDataV0.HistoryDataVersion = PARANDIS_DEBUG_HISTORY_DATA_VERSION;
+    BugCheckData.StaticData.Data.StaticDataV0.SizeOfHistory = MAX_HISTORY;
+    BugCheckData.StaticData.Data.StaticDataV0.SizeOfHistoryEntry = sizeof(tBugCheckHistoryDataEntry);
+    BugCheckData.StaticData.Data.StaticDataV0.HistoryData = (UINT_PTR)(PVOID)BugCheckData.StaticData.History;
+    BugCheckData.StaticData.Data.PendingNblEntryVersion = PARANDIS_DEBUG_PENDING_NBL_ENTRY_VERSION;
+    BugCheckData.StaticData.Data.PendingNblData = (UINT_PTR)(PVOID)BugCheckData.StaticData.PendingNbls;
+    BugCheckData.StaticData.Data.MaxPendingNbl = MAX_KEEP_NBLS;
     BugCheckData.Location.Address = (UINT64)&BugCheckData;
     BugCheckData.Location.Size = sizeof(BugCheckData);
+    RtlInitializeBitMap(&BugCheckData.StaticData.PendingNblsBitmap, BugCheckData.StaticData.PendingNblsBitmapBuffer, MAX_KEEP_NBLS);
 }
 
 void ParaNdis_DebugRegisterMiniport(PARANDIS_ADAPTER *pContext, BOOLEAN bRegister)
@@ -226,7 +263,7 @@ static UINT FillDataOnBugCheck()
             pSave->nofReadyTxBuffers += p->pPathBundles[j].txPath.GetFreeHWBuffers();
         }
 
-        pSave->LastInterruptTimeStamp.QuadPart = PARADNIS_GET_LAST_INTERRUPT_TIMESTAMP(p);
+        pSave->LastInterruptTimeStamp.QuadPart = PARANDIS_GET_LAST_INTERRUPT_TIMESTAMP(p);
         pSave->LastTxCompletionTimeStamp = p->LastTxCompletionTimeStamp;
         ParaNdis_CallOnBugCheck(p);
         ++n;
@@ -263,16 +300,16 @@ VOID ParaNdis_OnBugCheck(
                 pDump->OutBufferLength = dumpSize;
                 bNative = FALSE;
             }
-            DPrintf(0, ("[%s] system buffer of %d, saving data for %d NIC\n", __FUNCTION__,pDump->InBufferLength, nSaved));
-            DPrintf(0, ("[%s] using %s buffer\n", __FUNCTION__, bNative ? "native" : "own"));
+            DPrintf(0, "[%s] system buffer of %d, saving data for %d NIC\n", __FUNCTION__,pDump->InBufferLength, nSaved);
+            DPrintf(0, "[%s] using %s buffer\n", __FUNCTION__, bNative ? "native" : "own");
         }
         else if (pDump->OutBuffer == pDump->InBuffer)
         {
             RtlCopyMemory(&pDump->Guid, &ParaNdis_CrashGuid, sizeof(pDump->Guid));
             RtlCopyMemory(pDump->InBuffer, &BugCheckData.Location, dumpSize);
             pDump->OutBufferLength = dumpSize;
-            DPrintf(0, ("[%s] written %d to %p\n", __FUNCTION__, (ULONG)BugCheckData.Location.Size, (UINT_PTR)BugCheckData.Location.Address ));
-            DPrintf(0, ("[%s] dump data (%d) at %p\n", __FUNCTION__, pDump->OutBufferLength, pDump->OutBuffer));
+            DPrintf(0, "[%s] written %d to 0x%llx\n", __FUNCTION__, (ULONG)BugCheckData.Location.Size, (UINT_PTR)BugCheckData.Location.Address );
+            DPrintf(0, "[%s] dump data (%d) at %p\n", __FUNCTION__, pDump->OutBufferLength, pDump->OutBuffer);
         }
     }
 }
@@ -303,4 +340,48 @@ void ParaNdis_DebugHistory(
     NdisGetCurrentSystemTime(&phe->TimeStamp);
 }
 
+#endif
+
+#if defined(KEEP_PENDING_NBL)
+
+void ParaNdis_DebugNBLIn(PNET_BUFFER_LIST nbl, ULONG& index)
+{
+    NdisAcquireSpinLock(&CrashLock);
+    index = RtlFindClearBitsAndSet(&BugCheckData.StaticData.PendingNblsBitmap, 1, 0);
+    NdisReleaseSpinLock(&CrashLock);
+    if (index < MAX_KEEP_NBLS)
+    {
+        BugCheckData.StaticData.PendingNbls[index].NBL = (ULONG_PTR)(PVOID)nbl;
+        NdisGetCurrentSystemTime(&BugCheckData.StaticData.PendingNbls[index].TimeStamp);
+    }
+    else
+    {
+        // if no free bit in bitmap, ULONG(-1) returned
+        BugCheckData.StaticData.Data.fNBLOverflow = 1;
+    }
+}
+
+void ParaNdis_DebugNBLOut(ULONG index, PNET_BUFFER_LIST nbl)
+{
+    if (index >= MAX_KEEP_NBLS)
+        return;
+
+    NdisAcquireSpinLock(&CrashLock);
+    if (!RtlCheckBit(&BugCheckData.StaticData.PendingNblsBitmap, index))
+    {
+        // simple double free
+        RtlAssert(__FUNCTION__, __FILE__, __LINE__, NULL);
+    }
+    else if (BugCheckData.StaticData.PendingNbls[index].NBL != (ULONG_PTR)(PVOID)nbl)
+    {
+        // complicated double free
+        RtlAssert(__FUNCTION__, __FILE__, __LINE__, NULL);
+    }
+    else
+    {
+        RtlClearBit(&BugCheckData.StaticData.PendingNblsBitmap, index);
+        BugCheckData.StaticData.PendingNbls[index].NBL = 0;
+    }
+    NdisReleaseSpinLock(&CrashLock);
+}
 #endif

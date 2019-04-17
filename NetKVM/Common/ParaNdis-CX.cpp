@@ -1,10 +1,13 @@
 #include "ndis56common.h"
 #include "virtio_net.h"
 #include "kdebugprint.h"
+#include "Trace.h"
+#ifdef NETKVM_WPP_ENABLED
+#include "ParaNdis-CX.tmh"
+#endif
 
 CParaNdisCX::CParaNdisCX()
 {
-    m_ControlData.size = 512;
     m_ControlData.Virtual = nullptr;
 }
 
@@ -21,18 +24,27 @@ bool CParaNdisCX::Create(PPARANDIS_ADAPTER Context, UINT DeviceQueueIndex)
     m_Context = Context;
     m_queueIndex = (u16)DeviceQueueIndex;
 
-    if (!ParaNdis_InitialAllocatePhysicalMemory(m_Context, &m_ControlData))
+    if (!ParaNdis_InitialAllocatePhysicalMemory(m_Context, 512, &m_ControlData))
     {
-        DPrintf(0, ("CParaNdisCX::Create - ParaNdis_InitialAllocatePhysicalMemory failed for %u\n",
-            DeviceQueueIndex));
+        DPrintf(0, "CParaNdisCX::Create - ParaNdis_InitialAllocatePhysicalMemory failed for %u\n",
+            DeviceQueueIndex);
         m_ControlData.Virtual = nullptr;
         return false;
     }
 
+    m_Context->m_CxStateMachine.Start();
+
+    CreatePath();
+    InitDPC();
+
     return m_VirtQueue.Create(DeviceQueueIndex,
-        m_Context->IODevice,
-        m_Context->MiniportHandle,
-        m_Context->bDoPublishIndices ? true : false);
+        &m_Context->IODevice,
+        m_Context->MiniportHandle);
+}
+
+void CParaNdisCX::InitDPC()
+{
+    KeInitializeDpc(&m_DPC, MiniportMSIInterruptCXDpc, m_Context);
 }
 
 BOOLEAN CParaNdisCX::SendControlMessage(
@@ -90,45 +102,48 @@ BOOLEAN CParaNdisCX::SendControlMessage(
         if (0 <= m_VirtQueue.AddBuf(sg, nOut, 1, (PVOID)1, NULL, 0))
         {
             UINT len;
-            void *p;
-            /* Control messages are processed synchronously in QEMU, so upon kick_buf return, the response message
-              has been already inserted in the queue */
-            m_VirtQueue.KickAlways();
-            p = m_VirtQueue.GetBuf(&len);
-            if (!p)
+            m_Context->m_CxStateMachine.RegisterOutstandingItem();
+
+            m_VirtQueue.Kick();
+            while (!m_VirtQueue.GetBuf(&len))
             {
-                DPrintf(0, ("%s - ERROR: get_buf failed\n", __FUNCTION__));
+                UINT interval = 1;
+                NdisStallExecution(interval);
             }
-            else if (len != sizeof(virtio_net_ctrl_ack))
+            m_Context->m_CxStateMachine.UnregisterOutstandingItem();
+
+            if (len != sizeof(virtio_net_ctrl_ack))
             {
-                DPrintf(0, ("%s - ERROR: wrong len %d\n", __FUNCTION__, len));
+                DPrintf(0, "%s - ERROR: wrong len %d\n", __FUNCTION__, len);
             }
             else if (*(virtio_net_ctrl_ack *)(pBase + offset) != VIRTIO_NET_OK)
             {
-                DPrintf(0, ("%s - ERROR: error %d returned for class %d\n", __FUNCTION__, *(virtio_net_ctrl_ack *)(pBase + offset), cls));
+                DPrintf(0, "%s - ERROR: error %d returned for class %d\n", __FUNCTION__, *(virtio_net_ctrl_ack *)(pBase + offset), cls);
             }
             else
             {
                 // everything is OK
-                DPrintf(levelIfOK, ("%s OK(%d.%d,buffers of %d and %d) \n", __FUNCTION__, cls, cmd, size1, size2));
+                DPrintf(levelIfOK, "%s OK(%d.%d,buffers of %d and %d) \n", __FUNCTION__, cls, cmd, size1, size2);
                 bOK = TRUE;
             }
         }
         else
         {
-            DPrintf(0, ("%s - ERROR: add_buf failed\n", __FUNCTION__));
+            DPrintf(0, "%s - ERROR: add_buf failed\n", __FUNCTION__);
         }
     }
     else
     {
-        DPrintf(0, ("%s (buffer %d,%d) - ERROR: message too LARGE\n", __FUNCTION__, size1, size2));
+        DPrintf(0, "%s (buffer %d,%d) - ERROR: message too LARGE\n", __FUNCTION__, size1, size2);
     }
     return bOK;
 }
 
-NDIS_STATUS CParaNdisCX::SetupMessageIndex(u16 queueCardinal)
+NDIS_STATUS CParaNdisCX::SetupMessageIndex(u16 vector)
 {
-    WriteVirtIODeviceWord(m_Context->IODevice->addr + VIRTIO_MSI_CONFIG_VECTOR, (u16)queueCardinal);
+    DPrintf(0, "[%s] Using message %u for controls\n", __FUNCTION__, vector);
 
-    return CParaNdisAbstractPath::SetupMessageIndex(queueCardinal);
+    virtio_set_config_vector(&m_Context->IODevice, vector);
+
+    return CParaNdisAbstractPath::SetupMessageIndex(vector);
 }

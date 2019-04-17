@@ -31,28 +31,29 @@
 * SUCH DAMAGE.
 *
 * Copyright Rusty Russell IBM Corporation 2007. */
-#include <linux/types.h>
-#include <linux/virtio_types.h>
+
+#include "linux/types.h"
+#include "linux/virtio_types.h"
 
 #pragma warning (push)
 #pragma warning (disable:4200)
 #include <pshpack1.h>
 
 /* This marks a buffer as continuing via the next field. */
-#define VRING_DESC_F_NEXT	1
+#define VIRTQ_DESC_F_NEXT	1
 /* This marks a buffer as write-only (otherwise read-only). */
-#define VRING_DESC_F_WRITE	2
+#define VIRTQ_DESC_F_WRITE	2
 /* This means the buffer contains a list of buffer descriptors. */
-#define VRING_DESC_F_INDIRECT	4
+#define VIRTQ_DESC_F_INDIRECT	4
 
 /* The Host uses this in used->flags to advise the Guest: don't kick me when
 * you add a buffer.  It's unreliable, so it's simply an optimization.  Guest
 * will still kick if it's out of buffers. */
-#define VRING_USED_F_NO_NOTIFY	1
+#define VIRTQ_USED_F_NO_NOTIFY	1
 /* The Guest uses this in avail->flags to advise the Host: don't interrupt me
 * when you consume a buffer.  It's unreliable, so it's simply an
 * optimization.  */
-#define VRING_AVAIL_F_NO_INTERRUPT	1
+#define VIRTQ_AVAIL_F_NO_INTERRUPT	1
 
 /* We support indirect buffer descriptors */
 #define VIRTIO_RING_F_INDIRECT_DESC	28
@@ -153,9 +154,12 @@ static inline void vring_init(struct vring *vr, unsigned int num, void *p,
 
 static inline unsigned vring_size(unsigned int num, unsigned long align)
 {
+#pragma warning (push)
+#pragma warning (disable:4319)
     return ((sizeof(struct vring_desc) * num + sizeof(__virtio16) * (3 + num)
         + align - 1) & ~(align - 1))
         + sizeof(__virtio16) * 3 + sizeof(struct vring_used_elem) * num;
+#pragma warning(pop)
 }
 
 /* The following is used with USED_EVENT_IDX and AVAIL_EVENT_IDX */
@@ -174,5 +178,7 @@ static inline int vring_need_event(__u16 event_idx, __u16 new_idx, __u16 old)
 
 #include <poppack.h>
 #pragma warning (pop)
+
+void vring_transport_features(VirtIODevice *vdev, u64 *features);
 
 #endif /* _UAPI_LINUX_VIRTIO_RING_H */

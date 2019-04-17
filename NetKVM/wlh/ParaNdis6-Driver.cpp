@@ -1,14 +1,31 @@
-/**********************************************************************
- * Copyright (c) 2008-2015 Red Hat, Inc.
- *
- * File: ParaNdis6-Driver.c
- *
+/*
  * This file contains implementation of NDIS6 driver envelope.
  *
- * This work is licensed under the terms of the GNU GPL, version 2.  See
- * the COPYING file in the top-level directory.
+ * Copyright (c) 2008-2017 Red Hat, Inc.
  *
-**********************************************************************/
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met :
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and / or other materials provided with the distribution.
+ * 3. Neither the names of the copyright holders nor the names of their contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.IN NO EVENT SHALL THE COPYRIGHT HOLDERS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
 /* Vista SP4 DDI version hardcoded instead of using the definition from sdkddkver.h,
 as NT_PROCESSOR_GROUP has to be defined before ntddk.h->wdm.h and including
 sdkddkver.h before ntddk.h cause compilation failure in wdm.h and ntddk.h */
@@ -22,6 +39,11 @@ sdkddkver.h before ntddk.h cause compilation failure in wdm.h and ntddk.h */
 #include "kdebugprint.h"
 #include "ParaNdis_Debug.h"
 #include "ParaNdis_DebugHistory.h"
+#include "ParaNdis6_Driver.h"
+#include "Trace.h"
+#ifdef NETKVM_WPP_ENABLED
+#include "ParaNdis6-Driver.tmh"
+#endif
 
 extern "C"
 {
@@ -67,10 +89,12 @@ static VOID PostLinkState(PARANDIS_ADAPTER *pContext, NDIS_MEDIA_CONNECT_STATE c
     state.Header.Type = NDIS_OBJECT_TYPE_DEFAULT;
     state.Header.Size = NDIS_SIZEOF_LINK_STATE_REVISION_1;
     state.MediaConnectState = connectState;
-    state.MediaDuplexState = MediaDuplexStateFull;
+    state.MediaDuplexState = connectState == MediaConnectStateConnected ?
+        pContext->LinkProperties.DuplexState :
+        MediaDuplexStateUnknown;
     state.RcvLinkSpeed = state.XmitLinkSpeed =
         connectState == MediaConnectStateConnected ?
-            PARANDIS_MAXIMUM_RECEIVE_SPEED :
+        pContext->LinkProperties.Speed :
             NDIS_LINK_SPEED_UNKNOWN;
     state.PauseFunctions = NdisPauseFunctionsUnsupported;
 
@@ -83,7 +107,7 @@ static VOID PostLinkState(PARANDIS_ADAPTER *pContext, NDIS_MEDIA_CONNECT_STATE c
     indication.StatusCode = NDIS_STATUS_LINK_STATE;
     indication.StatusBuffer = &state;
     indication.StatusBufferSize = sizeof(state);
-    DPrintf(0, ("Indicating %s\n", ConnectStateName(connectState)));
+    DPrintf(0, "Indicating %s\n", ConnectStateName(connectState));
     ParaNdis_DebugHistory(pContext, hopConnectIndication, NULL, connectState, 0, 0);
     NdisMIndicateStatusEx(pContext->MiniportHandle , &indication);
 }
@@ -105,9 +129,9 @@ VOID ParaNdis_SynchronizeLinkState(PARANDIS_ADAPTER *pContext)
                                                          : MediaConnectStateDisconnected);
 }
 
-VOID ParaNdis_SetPowerState(PARANDIS_ADAPTER *pContext, NDIS_DEVICE_POWER_STATE newState)
+VOID ParaNdis_SendGratuitousArpPacket(PARANDIS_ADAPTER *pContext)
 {
-    pContext->powerState = newState;
+    pContext->guestAnnouncePackets.SendNBLs();
 }
 
 /**********************************************************
@@ -124,52 +148,53 @@ static NDIS_STATUS ParaNdis6_Initialize(
 {
     NDIS_MINIPORT_ADAPTER_ATTRIBUTES        miniportAttributes = {};
     NDIS_STATUS  status = NDIS_STATUS_SUCCESS;
-    BOOLEAN bNoPauseOnSuspend = FALSE;
-    PARANDIS_ADAPTER *pContext;
+    PARANDIS_ADAPTER *pContext = nullptr;
+    PVOID UnalignedAdapterContext = nullptr;
+    ULONG UnalignedAdapterContextSize;
 
     UNREFERENCED_PARAMETER(miniportDriverContext);
     DEBUG_ENTRY(0);
-#pragma warning( suppress: 28197)
-    /* allocate context structure */
-    pContext = (PARANDIS_ADAPTER *)
+    /* allocate context structure and align it to cache boundary */
+    UnalignedAdapterContextSize = sizeof(PARANDIS_ADAPTER) + NdisGetSharedDataAlignment();
+
+    UnalignedAdapterContext =
         NdisAllocateMemoryWithTagPriority(
             miniportAdapterHandle,
-            sizeof(PARANDIS_ADAPTER),
+            UnalignedAdapterContextSize,
             PARANDIS_MEMORY_TAG,
             NormalPoolPriority);
 
-    /* This call is for Static Driver Verifier only - has no real functionality*/
-    __sdv_save_adapter_context(pContext);
-
-    if (!pContext)
+    if (!UnalignedAdapterContext)
     {
-        DPrintf(0, ("[%s] ERROR: Memory allocation failed!\n", __FUNCTION__));
+        DPrintf(0, "[%s] ERROR: Memory allocation failed!\n", __FUNCTION__);
         status = NDIS_STATUS_RESOURCES;
     }
 
     if (status == NDIS_STATUS_SUCCESS)
     {
+        NdisZeroMemory(UnalignedAdapterContext, UnalignedAdapterContextSize);
+
+        pContext = (PARANDIS_ADAPTER *)ALIGN_UP_POINTER_BY(UnalignedAdapterContext, NdisGetSharedDataAlignment());
+
+        /* This call is for Static Driver Verifier only - has no real functionality*/
+        __sdv_save_adapter_context((PVOID*)&pContext);
+
+        pContext->UnalignedAdapterContext = UnalignedAdapterContext;
+        pContext->UnalignedAdapterContextSize = UnalignedAdapterContextSize;
+
         /* set mandatory fields which Common use */
-        NdisZeroMemory(pContext, sizeof(PARANDIS_ADAPTER));
         pContext->ulUniqueID = NdisInterlockedIncrement(&gID);
         pContext->DriverHandle = DriverHandle;
         pContext->MiniportHandle = miniportAdapterHandle;
-    }
 
-    if (status == NDIS_STATUS_SUCCESS)
-    {
-        NdisAllocateSpinLock(&pContext->m_CompletionLock);
-        pContext->m_CompletionLockCreated = true;
+        new (&pContext->m_StateMachine) CMiniportStateMachine;
+        new (&pContext->m_RxStateMachine) CDataFlowStateMachine;
+        new (&pContext->m_CxStateMachine) CConfigFlowStateMachine;
 
-        new (&pContext->m_PauseLock, PLACEMENT_NEW) CNdisRWLock();
-        if (!pContext->m_PauseLock.Create(pContext->MiniportHandle))
-        {
-            status = NDIS_STATUS_RESOURCES;
-        }
-    }
+        pContext->m_StateMachine.RegisterFlow(pContext->m_RxStateMachine);
+        pContext->m_StateMachine.RegisterFlow(pContext->m_CxStateMachine);
 
-    if (status == NDIS_STATUS_SUCCESS)
-    {
+
         NdisZeroMemory(&miniportAttributes, sizeof(miniportAttributes));
         miniportAttributes.RegistrationAttributes.Header.Type = NDIS_OBJECT_TYPE_MINIPORT_ADAPTER_REGISTRATION_ATTRIBUTES;
         miniportAttributes.RegistrationAttributes.Header.Revision = NDIS_MINIPORT_ADAPTER_REGISTRATION_ATTRIBUTES_REVISION_1;
@@ -185,32 +210,14 @@ static NDIS_STATUS ParaNdis6_Initialize(
 #endif
 #if NDIS_SUPPORT_NDIS630
         miniportAttributes.RegistrationAttributes.AttributeFlags |= NDIS_MINIPORT_ATTRIBUTES_NO_PAUSE_ON_SUSPEND;
-        bNoPauseOnSuspend = TRUE;
 #endif
         miniportAttributes.RegistrationAttributes.CheckForHangTimeInSeconds = 4;
         miniportAttributes.RegistrationAttributes.InterfaceType = NdisInterfacePci;
         status = NdisMSetMiniportAttributes(miniportAdapterHandle, &miniportAttributes);
         if (status != NDIS_STATUS_SUCCESS)
         {
-            DPrintf(0, ("[%s] ERROR: NdisMSetMiniportAttributes 1 failed (%X)!\n", __FUNCTION__, status));
+            DPrintf(0, "[%s] ERROR: NdisMSetMiniportAttributes 1 failed (%X)!\n", __FUNCTION__, status);
         }
-    }
-
-#pragma warning(push)
-#pragma warning(disable:28197)
-    if (status == NDIS_STATUS_SUCCESS)
-    {
-        pContext->IODevice = (VirtIODevice *)NdisAllocateMemoryWithTagPriority(
-            miniportAdapterHandle,
-            sizeof(VirtIODevice),
-            PARANDIS_MEMORY_TAG,
-            NormalPoolPriority);
-    }
-#pragma warning(pop)
-    if (!pContext->IODevice)
-    {
-        DPrintf(0, ("[%s] ERROR: IODevice memory allocation failed!\n", __FUNCTION__));
-        status = NDIS_STATUS_RESOURCES;
     }
 
     if (status == NDIS_STATUS_SUCCESS)
@@ -223,9 +230,8 @@ static NDIS_STATUS ParaNdis6_Initialize(
         status = ParaNdis_InitializeContext(pContext, miniportInitParameters->AllocatedResources);
         if (status != NDIS_STATUS_SUCCESS)
         {
-            DPrintf(0, ("[%s] ERROR: ParaNdis6_InitializeContext failed (%X)!\n", __FUNCTION__, status));
+            DPrintf(0, "[%s] ERROR: ParaNdis6_InitializeContext failed (%X)!\n", __FUNCTION__, status);
         }
-        pContext->bNoPauseOnSuspend = bNoPauseOnSuspend; 
     }
 
     if (status == NDIS_STATUS_SUCCESS)
@@ -256,13 +262,14 @@ static NDIS_STATUS ParaNdis6_Initialize(
         miniportAttributes.GeneralAttributes.MtuSize = pContext->MaxPacketSize.nMaxDataSize;
         miniportAttributes.GeneralAttributes.LookaheadSize = pContext->MaxPacketSize.nMaxFullSizeOS;
         miniportAttributes.GeneralAttributes.MaxXmitLinkSpeed =
-        miniportAttributes.GeneralAttributes.MaxRcvLinkSpeed  =  PARANDIS_FORMAL_LINK_SPEED;
+        miniportAttributes.GeneralAttributes.MaxRcvLinkSpeed  = pContext->LinkProperties.Speed;
         miniportAttributes.GeneralAttributes.MediaConnectState =
             pContext->bConnected ? MediaConnectStateConnected : MediaConnectStateDisconnected;
         miniportAttributes.GeneralAttributes.XmitLinkSpeed =
         miniportAttributes.GeneralAttributes.RcvLinkSpeed = pContext->bConnected ?
-            PARANDIS_FORMAL_LINK_SPEED : NDIS_LINK_SPEED_UNKNOWN;
-        miniportAttributes.GeneralAttributes.MediaDuplexState = MediaDuplexStateFull;
+            pContext->LinkProperties.Speed : NDIS_LINK_SPEED_UNKNOWN;
+        miniportAttributes.GeneralAttributes.MediaDuplexState = pContext->bConnected ?
+            pContext->LinkProperties.DuplexState : MediaDuplexStateUnknown;
         miniportAttributes.GeneralAttributes.MacOptions =
                     NDIS_MAC_OPTION_COPY_LOOKAHEAD_DATA |       /* NIC has no internal loopback support */
                     NDIS_MAC_OPTION_TRANSFERS_NOT_PEND  |       /* Must be set since using  NdisMIndicateReceivePacket */
@@ -283,13 +290,14 @@ static NDIS_STATUS ParaNdis6_Initialize(
                                                 &pContext->RSSParameters,
                                                 &pContext->RSSCapabilities,
                                                 pContext->RSSMaxQueuesNumber);
+            pContext->RSSParameters.ForceUdpRSS = pContext->bForceUdpRSS;
             pContext->bRSSInitialized = TRUE;
         }
 
-        new (&pContext->RSSParameters.rwLock, PLACEMENT_NEW) CNdisRWLock();
+        new (&pContext->RSSParameters.rwLock) CNdisRWLock();
         if (!pContext->RSSParameters.rwLock.Create(pContext->MiniportHandle))
         {
-            DPrintf(0, ("RSS RW lock allocation failed\n"));
+            DPrintf(0, "RSS RW lock allocation failed\n");
             status = NDIS_STATUS_RESOURCES;
         }
 
@@ -317,7 +325,7 @@ static NDIS_STATUS ParaNdis6_Initialize(
         status = NdisMSetMiniportAttributes(miniportAdapterHandle, &miniportAttributes);
         if (status != NDIS_STATUS_SUCCESS)
         {
-            DPrintf(0, ("[%s] ERROR: NdisMSetMiniportAttributes 2 failed (%X)!\n", __FUNCTION__, status));
+            DPrintf(0, "[%s] ERROR: NdisMSetMiniportAttributes 2 failed (%X)!\n", __FUNCTION__, status);
         }
     }
 
@@ -336,18 +344,16 @@ static NDIS_STATUS ParaNdis6_Initialize(
             }
         }
 #endif
-        if (pContext->m_CompletionLockCreated)
-        {
-            NdisFreeSpinLock(&pContext->m_CompletionLock);
-        }
 
-        pContext->m_PauseLock.~CNdisRWLock();
+        pContext->m_StateMachine.UnregisterFlow(pContext->m_RxStateMachine);
+        pContext->m_StateMachine.UnregisterFlow(pContext->m_CxStateMachine);
+        pContext->m_StateMachine.NotifyHalted();
 
-        if (pContext->IODevice != nullptr)
-            NdisFreeMemoryWithTagPriority(pContext->MiniportHandle, pContext->IODevice, PARANDIS_MEMORY_TAG);
+        pContext->m_CxStateMachine.~CConfigFlowStateMachine();
+        pContext->m_RxStateMachine.~CDataFlowStateMachine();
+        pContext->m_StateMachine.~CMiniportStateMachine();
 
-
-        NdisFreeMemory(pContext, 0, 0);
+        NdisFreeMemory(pContext->UnalignedAdapterContext, 0, 0);
         pContext = NULL;
     }
 
@@ -357,7 +363,7 @@ static NDIS_STATUS ParaNdis6_Initialize(
         if (status != NDIS_STATUS_SUCCESS)
         {
             ParaNdis_CleanupContext(pContext);
-            NdisFreeMemory(pContext, 0, 0);
+            NdisFreeMemory(pContext->UnalignedAdapterContext, 0, 0);
             pContext = NULL;
         }
     }
@@ -369,12 +375,13 @@ static NDIS_STATUS ParaNdis6_Initialize(
             status = NdisMSetMiniportAttributes(miniportAdapterHandle, &miniportAttributes);
             if (status != NDIS_STATUS_SUCCESS)
             {
-                DPrintf(0, ("[%s] ERROR: NdisMSetMiniportAttributes 3 failed (%X)!\n", __FUNCTION__, status));
+                DPrintf(0, "[%s] ERROR: NdisMSetMiniportAttributes 3 failed (%X)!\n", __FUNCTION__, status);
             }
     }
 
     if (pContext && status == NDIS_STATUS_SUCCESS)
     {
+        pContext->m_StateMachine.NotifyInitialized();
         ParaNdis_DebugRegisterMiniport(pContext, TRUE);
     }
 
@@ -395,7 +402,7 @@ static VOID ParaNdis6_Halt(NDIS_HANDLE miniportAdapterContext, NDIS_HALT_ACTION 
     ParaNdis_CleanupContext(pContext);
     ParaNdis_DebugHistory(pContext, hopHalt, NULL, 0, 0, 0);
     ParaNdis_DebugRegisterMiniport(pContext, FALSE);
-    NdisFreeMemory(pContext, 0, 0);
+    NdisFreeMemory(pContext->UnalignedAdapterContext, 0, 0);
     DEBUG_EXIT_STATUS(2, 0);
 }
 
@@ -409,37 +416,10 @@ static VOID ParaNdis6_Unload(IN PDRIVER_OBJECT pDriverObject)
     if (DriverHandle) NdisMDeregisterMiniportDriver(DriverHandle);
     DEBUG_EXIT_STATUS(2, 0);
     ParaNdis_DebugCleanup(pDriverObject);
+#ifdef NETKVM_WPP_ENABLED
+    WPP_CLEANUP(pDriverObject);
+#endif // WPP
 }
-
-/**********************************************************
-    callback from asynchronous RECEIVE PAUSE
-***********************************************************/
-static void OnReceivePauseComplete(void *ctx)
-{
-    DEBUG_ENTRY(0);
-    // pause exit
-    PPARANDIS_ADAPTER pContext = (PPARANDIS_ADAPTER) ctx;
-    ParaNdis_DebugHistory(pContext, hopSysPause, NULL, 0, 0, 0);
-    NdisMPauseComplete(pContext->MiniportHandle);
-}
-
-/**********************************************************
-    callback from asynchronous SEND PAUSE
-***********************************************************/
-static void OnSendPauseComplete(void *ctx)
-{
-    PPARANDIS_ADAPTER pContext = (PPARANDIS_ADAPTER) ctx;
-    NDIS_STATUS status;
-    DEBUG_ENTRY(0);
-    status = ParaNdis6_ReceivePauseRestart(pContext, TRUE, OnReceivePauseComplete);
-    if (status != NDIS_STATUS_PENDING)
-    {
-        // pause exit
-        ParaNdis_DebugHistory(pContext, hopSysPause, NULL, 0, 0, 0);
-        NdisMPauseComplete(pContext->MiniportHandle);
-    }
-}
-
 
 /**********************************************************
 Required NDIS handler
@@ -449,28 +429,12 @@ Called before halt, on standby,
 upon protocols activation
 ***********************************************************/
 static NDIS_STATUS ParaNdis6_Pause(
-        NDIS_HANDLE                         miniportAdapterContext,
-        PNDIS_MINIPORT_PAUSE_PARAMETERS     miniportPauseParameters)
+        NDIS_HANDLE miniportAdapterContext,
+        PNDIS_MINIPORT_PAUSE_PARAMETERS)
 {
-    NDIS_STATUS  status;
-    PARANDIS_ADAPTER *pContext = (PARANDIS_ADAPTER *)miniportAdapterContext;
     DEBUG_ENTRY(0);
-
-    UNREFERENCED_PARAMETER(miniportPauseParameters);
-
-    ParaNdis_DebugHistory(pContext, hopSysPause, NULL, 1, 0, 0);
-    status = ParaNdis6_SendPauseRestart(pContext, TRUE, OnSendPauseComplete);
-    if (status != NDIS_STATUS_PENDING)
-    {
-        status = ParaNdis6_ReceivePauseRestart(pContext, TRUE, OnReceivePauseComplete);
-    }
-    DEBUG_EXIT_STATUS(0, status);
-    if (status == STATUS_SUCCESS)
-    {
-        // pause exit
-        ParaNdis_DebugHistory(pContext, hopSysPause, NULL, 0, 0, 0);
-    }
-    return status;
+    static_cast<PPARANDIS_ADAPTER>(miniportAdapterContext)->m_StateMachine.NotifyPaused();
+    return NDIS_STATUS_SUCCESS;
 }
 
 /**********************************************************
@@ -481,22 +445,12 @@ Called upon startup, on resume,
 upon protocols activation
 ***********************************************************/
 static NDIS_STATUS ParaNdis6_Restart(
-    NDIS_HANDLE                         miniportAdapterContext,
-    PNDIS_MINIPORT_RESTART_PARAMETERS   miniportRestartParameters)
+    NDIS_HANDLE miniportAdapterContext,
+    PNDIS_MINIPORT_RESTART_PARAMETERS)
 {
-    NDIS_STATUS  status = NDIS_STATUS_SUCCESS;
-    PARANDIS_ADAPTER *pContext = (PARANDIS_ADAPTER *)miniportAdapterContext;
     DEBUG_ENTRY(0);
-
-    UNREFERENCED_PARAMETER(miniportRestartParameters);
-
-    ParaNdis_DebugHistory(pContext, hopSysResume, NULL, 1, 0, 0);
-    ParaNdis6_SendPauseRestart(pContext, FALSE, NULL);
-    ParaNdis6_ReceivePauseRestart(pContext, FALSE, NULL);
-
-    ParaNdis_DebugHistory(pContext, hopSysResume, NULL, 0, 0, 0);
-    DEBUG_EXIT_STATUS(2, status);
-    return status;
+    static_cast<PPARANDIS_ADAPTER>(miniportAdapterContext)->m_StateMachine.NotifyRestarted();
+    return NDIS_STATUS_SUCCESS;
 }
 
 
@@ -508,11 +462,13 @@ static VOID ParaNdis6_SendNetBufferLists(
     NDIS_HANDLE miniportAdapterContext,
     PNET_BUFFER_LIST    pNBL,
     NDIS_PORT_NUMBER    portNumber,
-    ULONG               /* sendFlags */)
+    ULONG               flags/* sendFlags */)
 {
     PARANDIS_ADAPTER *pContext = (PARANDIS_ADAPTER *)miniportAdapterContext;
     UNREFERENCED_PARAMETER(portNumber);
+    UNREFERENCED_PARAMETER(flags);
 #ifdef PARANDIS_SUPPORT_RSS
+    CNdisPassiveReadAutoLock autoLock(pContext->RSSParameters.rwLock);
     if (pContext->RSS2QueueMap != nullptr)
     {
         while (pNBL)
@@ -541,54 +497,10 @@ Required NDIS handler: happens unually each 2 second
 ***********************************************************/
 static BOOLEAN ParaNdis6_CheckForHang(NDIS_HANDLE miniportAdapterContext)
 {
-    UNREFERENCED_PARAMETER(miniportAdapterContext);
-    return FALSE;
-}
-
-
-/**********************************************************
-    callback from asynchronous SEND PAUSE on reset
-***********************************************************/
-static void OnSendPauseCompleteOnReset(void *ctx)
-{
-    DEBUG_ENTRY(0);
-    PPARANDIS_ADAPTER pContext = (PPARANDIS_ADAPTER) ctx;
-    NdisSetEvent(&pContext->ResetEvent);
-}
-
-/**********************************************************
-    callback from asynchronous RECEIVE PAUSE on reset
-***********************************************************/
-static void OnReceivePauseCompleteOnReset(void *ctx)
-{
-    DEBUG_ENTRY(0);
-    PPARANDIS_ADAPTER pContext = (PPARANDIS_ADAPTER) ctx;
-    NdisSetEvent(&pContext->ResetEvent);
-}
-
-VOID ParaNdis_Suspend(PARANDIS_ADAPTER *pContext)
-{
-    DPrintf(0, ("[%s]%s\n", __FUNCTION__, pContext->bFastSuspendInProcess ? "(Fast)" : ""));
-    NdisResetEvent(&pContext->ResetEvent);
-    if (NDIS_STATUS_PENDING != ParaNdis6_SendPauseRestart(pContext, TRUE, OnSendPauseCompleteOnReset))
-    {
-        NdisSetEvent(&pContext->ResetEvent);
-    }
-    NdisWaitEvent(&pContext->ResetEvent, 0);
-    if (!pContext->bFastSuspendInProcess)
-    {
-        NdisResetEvent(&pContext->ResetEvent);
-        if (NDIS_STATUS_PENDING != ParaNdis6_ReceivePauseRestart(pContext, TRUE, OnReceivePauseCompleteOnReset))
-        {
-            NdisSetEvent(&pContext->ResetEvent);
-        }
-        NdisWaitEvent(&pContext->ResetEvent, 0);
-    }
-    else
-    {
-        ParaNdis6_ReceivePauseRestart(pContext, TRUE, NULL);
-    }
-    DEBUG_EXIT_STATUS(0, 0);
+    PARANDIS_ADAPTER *pContext = (PARANDIS_ADAPTER *)miniportAdapterContext;
+    BOOLEAN ret = pContext->bDeviceNeedsReset;
+    pContext->bDeviceNeedsReset = FALSE;
+    return ret;
 }
 
 /**********************************************************
@@ -601,21 +513,12 @@ static NDIS_STATUS ParaNdis6_Reset(
         NDIS_HANDLE miniportAdapterContext,
         PBOOLEAN  pAddressingReset)
 {
-    UNREFERENCED_PARAMETER(miniportAdapterContext);
+    PARANDIS_ADAPTER *pContext = (PARANDIS_ADAPTER *)miniportAdapterContext;
+    ParaNdis_PowerOff(pContext);
+    ParaNdis_PowerOn(pContext);
     *pAddressingReset = FALSE;
     return NDIS_STATUS_SUCCESS;
 }
-
-VOID ParaNdis_Resume(PARANDIS_ADAPTER *pContext)
-{
-    DPrintf(0, ("[%s] %s\n", __FUNCTION__, pContext->bFastSuspendInProcess ? " Resuming TX and RX" : "(nothing to do)"));
-    if (pContext->bFastSuspendInProcess)
-    {
-        ParaNdis6_SendPauseRestart(pContext, FALSE, NULL);
-        ParaNdis6_ReceivePauseRestart(pContext, FALSE, NULL);
-    }
-}
-
 
 /***************************************************
 Required NDIS handler for adapter shutdown
@@ -627,9 +530,11 @@ static VOID ParaNdis6_AdapterShutdown(
     NDIS_HANDLE miniportAdapterContext,
     NDIS_SHUTDOWN_ACTION  shutdownAction)
 {
+    if (shutdownAction == NdisShutdownBugCheck)
+    {
+        return;
+    }
     PARANDIS_ADAPTER *pContext = (PARANDIS_ADAPTER *)miniportAdapterContext;
-
-    UNREFERENCED_PARAMETER(shutdownAction);
 
     ParaNdis_OnShutdown(pContext);
 }
@@ -777,7 +682,7 @@ static void PrintPRRL(PIO_RESOURCE_REQUIREMENTS_LIST prrl)
 
     for (ULONG ix = 0; ix < prrl->AlternativeLists; ++ix)
     {
-        DPrintf(0, ("[%s] List # %ld, count %lu\n", __FUNCTION__, ix, list->Count));
+        DPrintf(0, "[%s] List # %ld, count %lu\n", __FUNCTION__, ix, list->Count);
         for (ULONG jx = 0; jx < list->Count; ++jx)
         {
             PIO_RESOURCE_DESCRIPTOR desc;
@@ -787,15 +692,15 @@ static void PrintPRRL(PIO_RESOURCE_REQUIREMENTS_LIST prrl)
             switch (desc->Type)
             {
             case CmResourceTypePort:
-                DPrintf(0, ("CmResourceTypePort, align 0x%lx, length %lu, min/max 0x%llx/0x%llx\n", desc->u.Port.Alignment, desc->u.Port.Length, desc->u.Port.MinimumAddress, desc->u.Port.MaximumAddress));
+                DPrintf(0, "CmResourceTypePort, align 0x%lx, length %lu, min/max 0x%llx/0x%llx\n", desc->u.Port.Alignment, desc->u.Port.Length, desc->u.Port.MinimumAddress.QuadPart, desc->u.Port.MaximumAddress.QuadPart);
                 break;
             case CmResourceTypeInterrupt:
-                DPrintf(0, ("CmResourceTypeInterrupt, max/min 0x%lx/0x%lx affinity 0x%llx\n", desc->u.Interrupt.MinimumVector, desc->u.Interrupt.MaximumVector, desc->u.Interrupt.TargetedProcessors));
+                DPrintf(0, "CmResourceTypeInterrupt, max/min 0x%lx/0x%lx affinity 0x%llx\n", desc->u.Interrupt.MinimumVector, desc->u.Interrupt.MaximumVector, desc->u.Interrupt.TargetedProcessors);
                 break;
             case CmResourceTypeMemory:
-                DPrintf(0, ("CmResourceTypeMemory align %lu, length %lu, min 0x%llx, max 0x%llx\n", desc->u.Memory.Alignment, desc->u.Memory.Length, desc->u.Memory.MinimumAddress, desc->u.Memory.MaximumAddress));
+                DPrintf(0, "CmResourceTypeMemory align %lu, length %lu, min 0x%llx, max 0x%llx\n", desc->u.Memory.Alignment, desc->u.Memory.Length, desc->u.Memory.MinimumAddress.QuadPart, desc->u.Memory.MaximumAddress.QuadPart);
                 break;
-            default: 
+            default:
                 break;
             }
         }
@@ -807,6 +712,7 @@ static void SetupInterrruptAffinity(PIO_RESOURCE_REQUIREMENTS_LIST prrl)
 {
     PIO_RESOURCE_LIST list;
     ULONG procIndex = 0;
+    int interruptDescNum = 0;
 
     list = prrl->List;
 
@@ -830,16 +736,18 @@ static void SetupInterrruptAffinity(PIO_RESOURCE_REQUIREMENTS_LIST prrl)
                 {
                     desc->Flags |= CM_RESOURCE_INTERRUPT_POLICY_INCLUDED;
                     desc->u.Interrupt.Group = procNumber.Group;
-                    desc->u.Interrupt.TargetedProcessors = 1ll << procNumber.Number;
+                    desc->u.Interrupt.TargetedProcessors = 1i64 << procNumber.Number;
+                    DPrintf(0, "[%s]: Assigning CmResourceTypeInterrupt, min/max = %lx/%lx Option = 0x%lx, ShareDisposition = %u to #CPU = %d\n", __FUNCTION__,
+                        desc->u.Interrupt.MinimumVector, desc->u.Interrupt.MaximumVector, desc->Option, desc->ShareDisposition, procNumber.Number);
                 }
                 else
                 {
-                    DPrintf(0, ("[%s] - can't convert index %u into processor number\n", __FUNCTION__, procIndex));
+                    DPrintf(0, "[%s] - can't convert index %u into processor number\n", __FUNCTION__, procIndex);
                 }
 #else
-                desc->u.Interrupt.TargetedProcessors = 1ll << procIndex;
+                desc->u.Interrupt.TargetedProcessors = 1i64 << procIndex;
 #endif
-                if (jx % 2 == 1)
+                if (interruptDescNum % 2 == 1)
                 {
                     procIndex++;
 
@@ -848,6 +756,7 @@ static void SetupInterrruptAffinity(PIO_RESOURCE_REQUIREMENTS_LIST prrl)
                         procIndex = 0;
                     }
                 }
+                interruptDescNum++;
             }
         }
         list = (PIO_RESOURCE_LIST)(list->Descriptors + list->Count);
@@ -874,7 +783,7 @@ static PIO_RESOURCE_REQUIREMENTS_LIST ParseFilterResourceIrp(
     PIO_RESOURCE_REQUIREMENTS_LIST newPrrl = NULL;
     ULONG QueueNumber;
     BOOLEAN MSIResourceListed = FALSE;
-#if NDIS_SUPPORT_NDIS620    
+#if NDIS_SUPPORT_NDIS620
     QueueNumber = NdisGroupActiveProcessorCount(ALL_PROCESSOR_GROUPS) * 2 + 1;
 #elif NDIS_SUPPORT_NDIS6
     QueueNumber = NdisSystemProcessorCount() * 2 + 1;
@@ -886,7 +795,7 @@ static PIO_RESOURCE_REQUIREMENTS_LIST ParseFilterResourceIrp(
     if (QueueNumber > 2048)
         QueueNumber = 2048;
 
-    DPrintf(0, ("[%s]%s\n", __FUNCTION__, bRemoveMSIResources ? "(Remove MSI resources...)" : "(Don't remove MSI resources)"));
+    DPrintf(0, "[%s]%s\n", __FUNCTION__, bRemoveMSIResources ? "(Remove MSI resources...)" : "(Don't remove MSI resources)");
 
     newPrrl = (PIO_RESOURCE_REQUIREMENTS_LIST)NdisAllocateMemoryWithTagPriority(
             MiniportAddDeviceContext,
@@ -899,7 +808,7 @@ static PIO_RESOURCE_REQUIREMENTS_LIST ParseFilterResourceIrp(
     {
         ULONG n, offset;
         PVOID p = &prrl->List[0];
-        DPrintf(0, ("[%s] %d bytes, %d lists\n", __FUNCTION__, prrl->ListSize, prrl->AlternativeLists));
+        DPrintf(0, "[%s] %d bytes, %d lists\n", __FUNCTION__, prrl->ListSize, prrl->AlternativeLists);
         offset = RtlPointerToOffset(prrl, p);
         for (n = 0; n < prrl->AlternativeLists && offset < prrl->ListSize; ++n)
         {
@@ -908,7 +817,7 @@ static PIO_RESOURCE_REQUIREMENTS_LIST ParseFilterResourceIrp(
             if ((offset + sizeof(*pior)) < prrl->ListSize)
             {
                 IO_RESOURCE_DESCRIPTOR *pd = &pior->Descriptors[0];
-                DPrintf(0, ("[%s]+%d %d:%d descriptors follow\n", __FUNCTION__, offset, n, pior->Count));
+                DPrintf(0, "[%s]+%d %d:%d descriptors follow\n", __FUNCTION__, offset, n, pior->Count);
                 offset += RtlPointerToOffset(p, pd);
                 AddNewResourceList(&newRRLData, pior);
                 for (nDesc = 0; nDesc < pior->Count; ++nDesc)
@@ -919,8 +828,8 @@ static PIO_RESOURCE_REQUIREMENTS_LIST ParseFilterResourceIrp(
                         if (pd->Type == CmResourceTypeInterrupt)
                         {
                             nInterrupts++;
-                            DPrintf(0, ("[%s] CmResourceTypeInterrupt, min/max = %lx/%lx Option = 0x%lx, ShareDisposition = %u \n", __FUNCTION__, pd->u.Interrupt.MinimumVector, pd->u.Interrupt.MaximumVector,
-                                pd->Option, pd->ShareDisposition));
+                            DPrintf(0, "[%s] CmResourceTypeInterrupt, min/max = %lx/%lx Option = 0x%lx, ShareDisposition = %u \n", __FUNCTION__, pd->u.Interrupt.MinimumVector, pd->u.Interrupt.MaximumVector,
+                                pd->Option, pd->ShareDisposition);
                             if (pd->Flags & CM_RESOURCE_INTERRUPT_MESSAGE)
                             {
                                 MSIResourceListed = TRUE;
@@ -943,7 +852,7 @@ static PIO_RESOURCE_REQUIREMENTS_LIST ParseFilterResourceIrp(
                     pd = (IO_RESOURCE_DESCRIPTOR *)RtlOffsetToPointer(prrl, offset);
                 }
 
-                DPrintf(0, ("[%s] MSI resources %s listed\n", __FUNCTION__, MSIResourceListed ? "" : "not"));
+                DPrintf(0, "[%s] MSI resources %s listed\n", __FUNCTION__, MSIResourceListed ? "" : "not");
 
                 FinalizeResourceList(&newRRLData);
                 p = pd;
@@ -956,7 +865,7 @@ static PIO_RESOURCE_REQUIREMENTS_LIST ParseFilterResourceIrp(
     }
     if (bRemoveMSIResources && nRemoved)
     {
-        DPrintf(0, ("[%s] %d resources removed\n", __FUNCTION__, nRemoved));
+        DPrintf(0, "[%s] %d resources removed\n", __FUNCTION__, nRemoved);
     }
     return newPrrl;
 }
@@ -973,7 +882,7 @@ we just enumerate allocated resources and do not modify them.
 *******************************************************************/
 static NDIS_STATUS ParaNdis6_FilterResource(IN NDIS_HANDLE  MiniportAddDeviceContext, IN PIRP  Irp)
 {
-    DPrintf(0, ("[%s] entered\n", __FUNCTION__));
+    DPrintf(0, "[%s] entered\n", __FUNCTION__);
     PIO_RESOURCE_REQUIREMENTS_LIST prrl = (PIO_RESOURCE_REQUIREMENTS_LIST)(PVOID)Irp->IoStatus.Information;
 
     PrintPRRL(prrl);
@@ -988,7 +897,7 @@ static NDIS_STATUS ParaNdis6_FilterResource(IN NDIS_HANDLE  MiniportAddDeviceCon
     }
     else
     {
-        DPrintf(0, ("[%s] Resource requirement unchanged\n", __FUNCTION__));
+        DPrintf(0, "[%s] Resource requirement unchanged\n", __FUNCTION__);
     }
     return NDIS_STATUS_SUCCESS;
 }
@@ -1028,8 +937,6 @@ static NDIS_STATUS ReadGlobalConfigurationEntry(NDIS_HANDLE cfg, const char *_na
     const char *statusName;
     NDIS_PARAMETER_TYPE ParameterType = NdisParameterInteger;
     NdisInitializeString(&name, (PUCHAR)_name);
-#pragma warning(push)
-#pragma warning(disable:6102)
     NdisReadConfiguration(
         &status,
         &pParam,
@@ -1045,8 +952,7 @@ static NDIS_STATUS ReadGlobalConfigurationEntry(NDIS_HANDLE cfg, const char *_na
     {
         statusName = "nothing";
     }
-#pragma warning(pop)
-    DPrintf(2, ("[%s] %s read for %s - 0x%x\n", __FUNCTION__, statusName, _name, *pValue));
+    DPrintf(2, "[%s] %s read for %s - 0x%x\n", __FUNCTION__, statusName, _name, *pValue);
     if (name.Buffer) NdisFreeString(name);
     return status;
 }
@@ -1068,11 +974,8 @@ static void RetrieveDriverConfiguration()
         NDIS_STRING paramsName = {};
         NdisInitializeString(&paramsName, (PUCHAR)"Parameters");
 
-#pragma warning(push)
-#pragma warning(disable:6102) // Using <param> from failed function call at line...
         NdisOpenConfigurationKeyByName(&status, cfg, &paramsName, &params);
         if (status == NDIS_STATUS_SUCCESS)
-#pragma warning(pop)
         {
             ReadGlobalConfigurationEntry(params, "DisableMSI", &bDisableMSI);
             NdisCloseConfiguration(params);
@@ -1090,7 +993,7 @@ static NDIS_STATUS ParaNdis6x_DirectOidRequest(IN  NDIS_HANDLE miniportAdapterCo
 
     if (pContext->bSurprizeRemoved) status = NDIS_STATUS_NOT_ACCEPTED;
 
-    DPrintf(1, ("[%s] came %s\n", __FUNCTION__, ParaNdis_OidName(OidRequest->DATA.SET_INFORMATION.Oid)));
+    DPrintf(1, "[%s] came %s\n", __FUNCTION__, ParaNdis_OidName(OidRequest->DATA.SET_INFORMATION.Oid));
 
     return status;
 }
@@ -1123,12 +1026,17 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT pDriverObject, PUNICODE_STRING pRegistryPath
 #ifdef DEBUG_TIMING
     LARGE_INTEGER TickCount;
     LARGE_INTEGER SysTime;
-#endif //DEBUG_TIMING
+#endif DEBUG_TIMING
 
+#ifdef NETKVM_WPP_ENABLED
+    // Initialize WPP Tracing
+    WPP_INIT_TRACING(pDriverObject, pRegistryPath);
+#else
     ParaNdis_DebugInitialize();
+#endif
 
     DEBUG_ENTRY(0);
-    DPrintf(0, (__DATE__ " " __TIME__ "built %d.%d\n", NDIS_MINIPORT_MAJOR_VERSION, NDIS_MINIPORT_MINOR_VERSION));
+    DPrintf(0, __DATE__ " " __TIME__ "built %d.%d\n", NDIS_MINIPORT_MAJOR_VERSION, NDIS_MINIPORT_MINOR_VERSION);
 #ifdef DEBUG_TIMING
     KeQueryTickCount(&TickCount);
     NdisGetCurrentSystemTime(&SysTime);
@@ -1182,7 +1090,18 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT pDriverObject, PUNICODE_STRING pRegistryPath
     if (status == NDIS_STATUS_SUCCESS)
     {
         RetrieveDriverConfiguration();
+        DEBUG_EXIT_STATUS(status ? 0 : 4, status);
     }
-    DEBUG_EXIT_STATUS(status ? 0 : 4, status);
+    else
+    {
+#ifdef NETKVM_WPP_ENABLED
+        WPP_CLEANUP(pDriverObject);
+#endif // WPP
+    }
     return status;
+}
+
+VOID ParaNdis6_SendNBLInternal(NDIS_HANDLE miniportAdapterContext, PNET_BUFFER_LIST pNBL, NDIS_PORT_NUMBER portNumber, ULONG flags)
+{
+    ParaNdis6_SendNetBufferLists(miniportAdapterContext, pNBL, portNumber, flags);
 }

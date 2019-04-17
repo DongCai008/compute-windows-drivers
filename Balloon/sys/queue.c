@@ -1,5 +1,11 @@
 #include "precomp.h"
 
+#if defined(EVENT_TRACING)
+#include "queue.tmh"
+#endif
+
+#ifdef USE_BALLOON_SERVICE
+
 EVT_WDF_IO_QUEUE_IO_WRITE BalloonIoWrite;
 EVT_WDF_IO_QUEUE_IO_STOP BalloonIoStop;
 EVT_WDF_REQUEST_CANCEL BalloonEvtRequestCancel;
@@ -87,9 +93,9 @@ BalloonIoWrite(
         WdfRequestCompleteWithInformation(Request, status, Length);
         TraceEvents(TRACE_LEVEL_INFORMATION, DBG_HW_ACCESS, "WdfRequestCompleteWithInformation Called! Queue 0x%p, Request 0x%p Length %d Status 0x%08x\n",
             Queue, Request, Length, status);
-        BalloonMemStats(WdfIoQueueGetDevice(Queue));
 
         devCtx->HandleWriteRequest = FALSE;
+        BalloonMemStats(WdfIoQueueGetDevice(Queue));
     }
     else
     {
@@ -144,3 +150,5 @@ VOID BalloonEvtRequestCancel(IN WDFREQUEST Request)
 
     TraceEvents(TRACE_LEVEL_VERBOSE, DBG_READ, "<-- BalloonEvtRequestCancel\n");
 }
+
+#endif // USE_BALLOON_SERVICE

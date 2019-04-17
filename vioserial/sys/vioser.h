@@ -1,17 +1,32 @@
-/**********************************************************************
- * Copyright (c) 2010-2015 Red Hat, Inc.
- *
- * File: vioser.h
- *
- * Author(s):
- *
+/*
  * Main include file
  * This file contains various routines and globals
  *
- * This work is licensed under the terms of the GNU GPL, version 2.  See
- * the COPYING file in the top-level directory.
+ * Copyright (c) 2010-2017 Red Hat, Inc.
  *
-**********************************************************************/
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met :
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and / or other materials provided with the distribution.
+ * 3. Neither the names of the copyright holders nor the names of their contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.IN NO EVENT SHALL THE COPYRIGHT HOLDERS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
 #if !defined(VIOSERIAL_H)
 #define VIOSERIAL_H
 #include "public.h"
@@ -24,13 +39,6 @@ EVT_WDF_INTERRUPT_DPC                           VIOSerialQueuesInterruptDpc;
 EVT_WDF_INTERRUPT_ENABLE                        VIOSerialInterruptEnable;
 EVT_WDF_INTERRUPT_DISABLE                       VIOSerialInterruptDisable;
 
-
-
-#define VIRTIO_SERIAL_MAX_PORTS 31
-#define VIRTIO_SERIAL_MAX_QUEUES_COUPLES (VIRTIO_SERIAL_MAX_PORTS + 1)
-#define VIRTIO_SERIAL_CONTROL_PORT_INDEX 1
-
-#define VIRTIO_SERIAL_INVALID_INTERRUPT_STATUS 0xFF
 
 #define VIRTIO_CONSOLE_F_SIZE      0
 #define VIRTIO_CONSOLE_F_MULTIPORT 1
@@ -47,13 +55,16 @@ EVT_WDF_INTERRUPT_DISABLE                       VIOSerialInterruptDisable;
 #define VIRTIO_CONSOLE_PORT_OPEN        6
 #define VIRTIO_CONSOLE_PORT_NAME        7
 
-#define RETRY_THRESHOLD                 400
+// This is the value of the IOCTL_GET_INFORMATION macro used by older versions
+// of the driver. We still respond to it for backward compatibility. New clients
+// should use the new value declared in public.h.
+#define IOCTL_GET_INFORMATION_BUFFERED CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
 #pragma pack (push)
 #pragma pack (1)
 
 typedef struct _tagConsoleConfig {
-    //* colums of the screens
+    //* columns of the screens
     u16 cols;
     //* rows of the screens
     u16 rows;
@@ -75,12 +86,7 @@ typedef struct _tagVirtioConsoleControl {
 
 typedef struct _tagPortDevice
 {
-    VirtIODevice        *pIODevice;
-
-    PHYSICAL_ADDRESS    PortBasePA;
-    ULONG               uPortLength;
-    PVOID               pPortBase;
-    bool                bPortMapped;
+    VIRTIO_WDF_DRIVER   VDevice;
 
     WDFINTERRUPT        WdfInterrupt;
     WDFINTERRUPT        QueuesInterrupt;
@@ -90,7 +96,8 @@ typedef struct _tagPortDevice
     CONSOLE_CONFIG      consoleConfig;
     struct virtqueue    *c_ivq, *c_ovq;
     struct virtqueue    **in_vqs, **out_vqs;
-    WDFSPINLOCK         CVqLock;
+    WDFSPINLOCK         CInVqLock;
+    WDFWAITLOCK         COutVqLock;
 
     BOOLEAN             DeviceOK;
     UINT                DeviceId;
@@ -122,6 +129,8 @@ typedef struct _tagPortBuffer
 typedef struct _WriteBufferEntry
 {
     SINGLE_LIST_ENTRY ListEntry;
+    WDFMEMORY EntryHandle;
+    WDFREQUEST Request;
     PVOID Buffer;
 } WRITE_BUFFER_ENTRY, *PWRITE_BUFFER_ENTRY;
 
@@ -145,7 +154,6 @@ typedef struct _tagVioSerialPort
     BOOLEAN             Removed;
     WDFQUEUE            ReadQueue;
     WDFREQUEST          PendingReadRequest;
-    WDFREQUEST          PendingWriteRequest;
 
     // Hold a list of allocated buffers which were written to the virt queue
     // and was not returned yet.
@@ -166,11 +174,25 @@ typedef struct _tagRawPdoVioSerialPort
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(RAWPDO_VIOSERIAL_PORT, RawPdoSerialPortGetData)
 
 
+typedef struct _tagDriverContext
+{
+    // one global lookaside owned by the driver object
+    WDFLOOKASIDE WriteBufferLookaside;
+} DRIVER_CONTEXT, *PDRIVER_CONTEXT;
+
+WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(DRIVER_CONTEXT, GetDriverContext)
+
+
 NTSTATUS
 VIOSerialFillQueue(
     IN struct virtqueue *vq,
     IN WDFSPINLOCK Lock
 );
+
+VOID
+VIOSerialDrainQueue(
+    IN struct virtqueue *vq
+    );
 
 NTSTATUS
 VIOSerialAddInBuf(
@@ -179,6 +201,11 @@ VIOSerialAddInBuf(
 );
 
 VOID
+VIOSerialProcessInputBuffers(
+    IN PVIOSERIAL_PORT port
+);
+
+BOOLEAN
 VIOSerialReclaimConsumedBuffers(
     IN PVIOSERIAL_PORT port
 );
@@ -186,7 +213,7 @@ VIOSerialReclaimConsumedBuffers(
 size_t
 VIOSerialSendBuffers(
     IN PVIOSERIAL_PORT Port,
-    IN PVOID Buffer,
+    IN PWRITE_BUFFER_ENTRY Entry,
     IN size_t Length
 );
 
@@ -240,6 +267,7 @@ VIOSerialRemovePort(
 
 VOID
 VIOSerialInitPortConsole(
+    IN WDFDEVICE Device,
     IN PVIOSERIAL_PORT port
 );
 
@@ -269,14 +297,27 @@ VIOSerialEnableInterruptQueue(IN struct virtqueue *vq);
 VOID
 VIOSerialDisableInterruptQueue(IN struct virtqueue *vq);
 
+#ifndef _IRQL_requires_
+#define _IRQL_requires_(level)
+#endif
+#ifndef _Analysis_assume_
+#define _Analysis_assume_(expr)
+#endif
+
 EVT_WDF_CHILD_LIST_CREATE_DEVICE VIOSerialDeviceListCreatePdo;
 EVT_WDF_CHILD_LIST_IDENTIFICATION_DESCRIPTION_COMPARE VIOSerialEvtChildListIdentificationDescriptionCompare;
 EVT_WDF_CHILD_LIST_IDENTIFICATION_DESCRIPTION_CLEANUP VIOSerialEvtChildListIdentificationDescriptionCleanup;
 EVT_WDF_CHILD_LIST_IDENTIFICATION_DESCRIPTION_DUPLICATE VIOSerialEvtChildListIdentificationDescriptionDuplicate;
-EVT_WDF_IO_QUEUE_IO_READ VIOSerialPortRead;
-EVT_WDF_IO_QUEUE_IO_WRITE VIOSerialPortWrite;
-EVT_WDF_IO_QUEUE_IO_STOP VIOSerialPortIoStop;
-EVT_WDF_IO_QUEUE_IO_DEVICE_CONTROL VIOSerialPortDeviceControl;
+
+// IO queue callbacks generally run at IRQL <= DISPATCH_LEVEL but our port
+// devices use WdfExecutionLevelPassive so they are guaranteed to run at
+// PASSIVE_LEVEL. Annotate the prototypes to make static analysis happy.
+EVT_WDF_IO_QUEUE_IO_READ _IRQL_requires_(PASSIVE_LEVEL) VIOSerialPortRead;
+EVT_WDF_IO_QUEUE_IO_WRITE _IRQL_requires_(PASSIVE_LEVEL) VIOSerialPortWrite;
+EVT_WDF_IO_QUEUE_IO_STOP _IRQL_requires_(PASSIVE_LEVEL) VIOSerialPortReadIoStop;
+EVT_WDF_IO_QUEUE_IO_STOP _IRQL_requires_(PASSIVE_LEVEL) VIOSerialPortWriteIoStop;
+EVT_WDF_IO_QUEUE_IO_DEVICE_CONTROL _IRQL_requires_(PASSIVE_LEVEL) VIOSerialPortDeviceControl;
+
 EVT_WDF_DEVICE_FILE_CREATE VIOSerialPortCreate;
 EVT_WDF_FILE_CLOSE VIOSerialPortClose;
 

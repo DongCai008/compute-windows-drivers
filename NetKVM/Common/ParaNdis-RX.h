@@ -17,7 +17,7 @@ public:
 
     void ReuseReceiveBuffer(pRxNetDescriptor pBuffersDescriptor)
     {
-        CLockedContext<CNdisSpinLock> autoLock(m_Lock);
+        TPassiveSpinLocker autoLock(m_Lock);
 
         ReuseReceiveBufferNoLock(pBuffersDescriptor);
     }
@@ -28,11 +28,13 @@ public:
 
     void Shutdown()
     {
-        CLockedContext<CNdisSpinLock> autoLock(m_Lock);
+        TPassiveSpinLocker autoLock(m_Lock);
 
         m_VirtQueue.Shutdown();
         m_Reinsert = false;
     }
+
+    void KickRXRing();
 
     PARANDIS_RECEIVE_QUEUE &UnclassifiedPacketsQueue() { return m_UnclassifiedPacketsQueue;  }
 
@@ -43,21 +45,6 @@ private:
 
     UINT m_nReusedRxBuffersCounter, m_nReusedRxBuffersLimit;
 
-    // Reserved Memory for Rx Buffers. Each memory block will be 256K.
-    // The total limit is 256 * 256k = 64M. The actually Physical memory
-    // will be allocated via NdisMAllocateSharedMemory() as needed when
-    // the actual buffer is allocated upon driver init.
-    tCompletePhysicalAddress m_ReservedRxBufferMemory[256];
-    // The next available memory address within current memory block. It
-    // should be PAGE aligned.
-    ULONG m_RxBufferOffset;
-    // The current memory block. If it's exhausted, index is incremented
-    // to use next one.
-    ULONG m_RxBufferIndex;
-
-    // False if we run out of reserved memory. True otherwise.
-    BOOLEAN InitialAllocatePhysicalMemory(tCompletePhysicalAddress* Address);
-
     bool m_Reinsert = true;
 
     PARANDIS_RECEIVE_QUEUE m_UnclassifiedPacketsQueue;
@@ -66,6 +53,4 @@ private:
 private:
     int PrepareReceiveBuffers();
     pRxNetDescriptor CreateRxDescriptorOnInit();
-
-    static BOOLEAN _Function_class_(MINIPORT_SYNCHRONIZE_INTERRUPT) RestartQueueSynchronously(tSynchronizedContext *ctx);
 };

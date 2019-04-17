@@ -1,56 +1,39 @@
-/**********************************************************************
- * Copyright (c) 2009-2015  Red Hat, Inc.
+/*
+ * This file contains balloon driver routines
  *
- * File: balloon.c
+ * Copyright (c) 2009-2017  Red Hat, Inc.
  *
  * Author(s):
  *  Vadim Rozenfeld <vrozenfe@redhat.com>
  *
- * This file contains balloon driver routines
- *
- * This work is licensed under the terms of the GNU GPL, version 2.  See
- * the COPYING file in the top-level directory.
- *
-**********************************************************************/
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met :
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and / or other materials provided with the distribution.
+ * 3. Neither the names of the copyright holders nor the names of their contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.IN NO EVENT SHALL THE COPYRIGHT HOLDERS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
 #include "precomp.h"
 
 #if defined(EVENT_TRACING)
 #include "balloon.tmh"
 #endif
-
-static PVIOQUEUE FindVirtualQueue(VIODEVICE *dev, ULONG index)
-{
-    PVIOQUEUE  pq = NULL;
-    PVOID p;
-    ULONG size, allocSize;
-    VirtIODeviceQueryQueueAllocation(dev, index, &size, &allocSize);
-    if (allocSize)
-    {
-        PHYSICAL_ADDRESS HighestAcceptable;
-        HighestAcceptable.QuadPart = 0xFFFFFFFFFF;
-        p = MmAllocateContiguousMemory(allocSize, HighestAcceptable);
-        if (p)
-        {
-            pq = VirtIODevicePrepareQueue(dev, index, MmGetPhysicalAddress(p), p, allocSize, p, FALSE);
-        }
-    }
-    return pq;
-}
-
-static void DeleteQueue(struct virtqueue **pvq)
-{
-    struct virtqueue *vq = *pvq;
-    PVOID p;
-
-    TraceEvents(TRACE_LEVEL_INFORMATION, DBG_INIT, "Deleting queue %p\n", vq);
-
-    if (vq != NULL)
-    {
-        VirtIODeviceDeleteQueue(vq, &p);
-        MmFreeContiguousMemory(p);
-        *pvq = NULL;
-    }
-}
 
 NTSTATUS
 BalloonInit(
@@ -59,76 +42,102 @@ BalloonInit(
 {
     NTSTATUS            status = STATUS_SUCCESS;
     PDEVICE_CONTEXT     devCtx = GetDeviceContext(WdfDevice);
-    u32 hostFeatures;
-    u32 guestFeatures = 0;
+    u64 u64HostFeatures;
+    u64 u64GuestFeatures = 0;
+    bool notify_stat_queue = false;
+    VIRTIO_WDF_QUEUE_PARAM params[3];
+    PVIOQUEUE vqs[3];
+    ULONG nvqs;
 
     TraceEvents(TRACE_LEVEL_INFORMATION, DBG_PNP, "--> BalloonInit\n");
 
-    VirtIODeviceReset(&devCtx->VDevice);
+    WdfObjectAcquireLock(WdfDevice);
 
-    VirtIODeviceAddStatus(&devCtx->VDevice, VIRTIO_CONFIG_S_ACKNOWLEDGE);
-    VirtIODeviceAddStatus(&devCtx->VDevice, VIRTIO_CONFIG_S_DRIVER);
+    // inflate
+    params[0].Interrupt = devCtx->WdfInterrupt;
 
-    do
+    // deflate
+    params[1].Interrupt = devCtx->WdfInterrupt;
+
+    // stats
+    params[2].Interrupt = devCtx->WdfInterrupt;
+
+    u64HostFeatures = VirtIOWdfGetDeviceFeatures(&devCtx->VDevice);
+
+    if (virtio_is_feature_enabled(u64HostFeatures, VIRTIO_F_VERSION_1))
     {
-        devCtx->InfVirtQueue = FindVirtualQueue(&devCtx->VDevice, 0);
-        if (!devCtx->InfVirtQueue)
-        {
-           status = STATUS_INSUFFICIENT_RESOURCES;
-           break;
-        }
-
-        devCtx->DefVirtQueue = FindVirtualQueue(&devCtx->VDevice, 1);
-        if (!devCtx->DefVirtQueue)
-        {
-           status = STATUS_INSUFFICIENT_RESOURCES;
-           break;
-        }
-
-        hostFeatures = VirtIODeviceReadHostFeatures(&devCtx->VDevice);
-
-        if (VirtIOIsFeatureEnabled(hostFeatures, VIRTIO_BALLOON_F_STATS_VQ))
-        {
-           VIO_SG  sg;
-           
-           TraceEvents(TRACE_LEVEL_INFORMATION, DBG_PNP,
-               "Enable stats feature.\n");
-
-           devCtx->StatVirtQueue = FindVirtualQueue(&devCtx->VDevice, 2);
-           if (!devCtx->StatVirtQueue)
-           {
-              status = STATUS_INSUFFICIENT_RESOURCES;
-              break;
-           }
-
-           sg.physAddr = MmGetPhysicalAddress(devCtx->MemStats);
-           sg.length = sizeof (BALLOON_STAT) * VIRTIO_BALLOON_S_NR;
-
-           if (virtqueue_add_buf(
-                   devCtx->StatVirtQueue, &sg, 1, 0, devCtx, NULL, 0) >= 0)
-           {
-               virtqueue_kick(devCtx->StatVirtQueue);
-               VirtIOFeatureEnable(guestFeatures, VIRTIO_BALLOON_F_STATS_VQ);
-           }
-           else
-           {
-               TraceEvents(TRACE_LEVEL_ERROR, DBG_HW_ACCESS,
-                   "Failed to add buffer to stats queue.\n");
-           }
-        }
-#pragma warning(suppress: 4127)
-    } while(FALSE);
-
-    VirtIODeviceWriteGuestFeatures(&devCtx->VDevice, guestFeatures);
-
-    if(NT_SUCCESS(status))
+        virtio_feature_enable(u64GuestFeatures, VIRTIO_F_VERSION_1);
+    }
+    if (virtio_is_feature_enabled(u64HostFeatures, VIRTIO_F_ANY_LAYOUT))
     {
-        VirtIODeviceAddStatus(&devCtx->VDevice, VIRTIO_CONFIG_S_DRIVER_OK);
+        virtio_feature_enable(u64GuestFeatures, VIRTIO_F_ANY_LAYOUT);
+    }
+    if (virtio_is_feature_enabled(u64HostFeatures, VIRTIO_BALLOON_F_STATS_VQ))
+    {
+        TraceEvents(TRACE_LEVEL_INFORMATION, DBG_PNP,
+            "Enable stats feature.\n");
+
+        virtio_feature_enable(u64GuestFeatures, VIRTIO_BALLOON_F_STATS_VQ);
+        nvqs = 3;
     }
     else
     {
-        VirtIODeviceAddStatus(&devCtx->VDevice, VIRTIO_CONFIG_S_FAILED);
+        nvqs = 2;
     }
+
+    status = VirtIOWdfSetDriverFeatures(&devCtx->VDevice, u64GuestFeatures);
+    if (NT_SUCCESS(status))
+    {
+        // initialize 2 or 3 queues
+        status = VirtIOWdfInitQueues(&devCtx->VDevice, nvqs, vqs, params);
+        if (NT_SUCCESS(status))
+        {
+            devCtx->InfVirtQueue = vqs[0];
+            devCtx->DefVirtQueue = vqs[1];
+
+            if (nvqs == 3)
+            {
+                VIO_SG  sg;
+
+                devCtx->StatVirtQueue = vqs[2];
+
+                sg.physAddr = MmGetPhysicalAddress(devCtx->MemStats);
+                sg.length = sizeof (BALLOON_STAT) * VIRTIO_BALLOON_S_NR;
+
+                if (virtqueue_add_buf(
+                    devCtx->StatVirtQueue, &sg, 1, 0, devCtx, NULL, 0) >= 0)
+                {
+                    notify_stat_queue = true;
+                }
+                else
+                {
+                    TraceEvents(TRACE_LEVEL_ERROR, DBG_HW_ACCESS,
+                        "Failed to add buffer to stats queue.\n");
+                }
+            }
+            VirtIOWdfSetDriverOK(&devCtx->VDevice);
+        }
+        else
+        {
+            TraceEvents(TRACE_LEVEL_ERROR, DBG_HW_ACCESS,
+                "VirtIOWdfInitQueues failed with %x\n", status);
+            VirtIOWdfSetDriverFailed(&devCtx->VDevice);
+        }
+    }
+    else
+    {
+        TraceEvents(TRACE_LEVEL_ERROR, DBG_HW_ACCESS,
+            "VirtIOWdfSetDriverFeatures failed with %x\n", status);
+        VirtIOWdfSetDriverFailed(&devCtx->VDevice);
+    }
+
+    // notify the stat queue only after the virtual device has been fully initialized
+    if (notify_stat_queue)
+    {
+        virtqueue_kick(devCtx->StatVirtQueue);
+    }
+
+    WdfObjectReleaseLock(WdfDevice);
 
     TraceEvents(TRACE_LEVEL_INFORMATION, DBG_PNP, "<-- BalloonInit\n");
     return status;
@@ -266,18 +275,27 @@ BalloonTellHost(
     PDEVICE_CONTEXT     devCtx = GetDeviceContext(WdfDevice);
     NTSTATUS            status;
     LARGE_INTEGER       timeout = {0};
+    bool                do_notify;
 
     TraceEvents(TRACE_LEVEL_INFORMATION, DBG_HW_ACCESS, "--> %s\n", __FUNCTION__);
 
     sg.physAddr = MmGetPhysicalAddress(devCtx->pfns_table);
     sg.length = sizeof(devCtx->pfns_table[0]) * devCtx->num_pfns;
 
+    WdfSpinLockAcquire(devCtx->InfDefQueueLock);
     if (virtqueue_add_buf(vq, &sg, 1, 0, devCtx, NULL, 0) < 0)
     {
         TraceEvents(TRACE_LEVEL_ERROR, DBG_HW_ACCESS, "<-> %s :: Cannot add buffer\n", __FUNCTION__);
+        WdfSpinLockRelease(devCtx->InfDefQueueLock);
         return;
     }
-    virtqueue_kick(vq);
+    do_notify = virtqueue_kick_prepare(vq);
+    WdfSpinLockRelease(devCtx->InfDefQueueLock);
+
+    if (do_notify)
+    {
+        virtqueue_notify(vq);
+    }
 
     timeout.QuadPart = Int32x32To64(1000, -10000);
     status = KeWaitForSingleObject (
@@ -303,13 +321,12 @@ BalloonTerm(
 
     TraceEvents(TRACE_LEVEL_INFORMATION, DBG_PNP, "--> BalloonTerm\n");
 
-    VirtIODeviceRemoveStatus(&devCtx->VDevice , VIRTIO_CONFIG_S_DRIVER_OK);
+    WdfObjectAcquireLock(WdfDevice);
 
-    DeleteQueue(&devCtx->DefVirtQueue);
-    DeleteQueue(&devCtx->InfVirtQueue);
-    DeleteQueue(&devCtx->StatVirtQueue);
+    VirtIOWdfDestroyQueues(&devCtx->VDevice);
+    devCtx->StatVirtQueue = NULL;
 
-    VirtIODeviceReset(&devCtx->VDevice);
+    WdfObjectReleaseLock(WdfDevice);
 
     TraceEvents(TRACE_LEVEL_INFORMATION, DBG_PNP, "<-- BalloonTerm\n");
 }
@@ -321,17 +338,25 @@ BalloonMemStats(
 {
     VIO_SG              sg;
     PDEVICE_CONTEXT     devCtx = GetDeviceContext(WdfDevice);
+    bool                do_notify;
 
     TraceEvents(TRACE_LEVEL_INFORMATION, DBG_HW_ACCESS, "--> %s\n", __FUNCTION__);
 
     sg.physAddr = MmGetPhysicalAddress(devCtx->MemStats);
     sg.length = sizeof(BALLOON_STAT) * VIRTIO_BALLOON_S_NR;
 
+    WdfSpinLockAcquire(devCtx->StatQueueLock);
     if (virtqueue_add_buf(devCtx->StatVirtQueue, &sg, 1, 0, devCtx, NULL, 0) < 0)
     {
         TraceEvents(TRACE_LEVEL_ERROR, DBG_HW_ACCESS, "<-> %s :: Cannot add buffer\n", __FUNCTION__);
     }
+    do_notify = virtqueue_kick_prepare(devCtx->StatVirtQueue);
+    WdfSpinLockRelease(devCtx->StatQueueLock);
 
-    virtqueue_kick(devCtx->StatVirtQueue);
+    if (do_notify)
+    {
+        virtqueue_notify(devCtx->StatVirtQueue);
+    }
+
     TraceEvents(TRACE_LEVEL_INFORMATION, DBG_HW_ACCESS, "<-- %s\n", __FUNCTION__);
 }

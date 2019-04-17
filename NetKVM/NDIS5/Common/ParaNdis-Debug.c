@@ -1,14 +1,31 @@
-/**********************************************************************
- * Copyright (c) 2008-2015 Red Hat, Inc.
- *
- * File: ParaNdis6-Debug.c
- *
+/*
  * This file contains debug support procedures, common for NDIS5 and NDIS6
  *
- * This work is licensed under the terms of the GNU GPL, version 2.  See
- * the COPYING file in the top-level directory.
+ * Copyright (c) 2008-2017 Red Hat, Inc.
  *
-**********************************************************************/
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met :
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and / or other materials provided with the distribution.
+ * 3. Neither the names of the copyright holders nor the names of their contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.IN NO EVENT SHALL THE COPYRIGHT HOLDERS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
 #include "ndis56common.h"
 #include "stdarg.h"
 #include "ntstrsafe.h"
@@ -19,6 +36,7 @@
 #include "ParaNdis-Debug.tmh"
 #endif
 
+int virtioDebugLevel = 1;
 int nDebugLevel = 1;
 int bDebugPrint = 1;
 
@@ -113,11 +131,13 @@ static void DebugPrint(const char *fmt, ...)
 }
 
 DEBUGPRINTFUNC pDebugPrint = DebugPrint;
+DEBUGPRINTFUNC VirtioDebugPrintProc = DebugPrint;
 
 #else //DPFLTR_MASK
 #pragma message("DebugPrint for Win2K")
 
 DEBUGPRINTFUNC pDebugPrint = DbgPrint;
+DEBUGPRINTFUNC VirtioDebugPrintProc = DbgPrint;
 
 #endif //DPFLTR_MASK
 #endif //!defined(WPP_EVENT_TRACING) || defined(WPP_USE_BYPASS)
@@ -291,7 +311,7 @@ static UINT FillDataOnBugCheck()
         if (!p) continue;
         pSave->nofPacketsToComplete = p->NetTxPacketsToReturn;
         pSave->nofReadyTxBuffers = p->nofFreeHardwareBuffers;
-        pSave->LastInterruptTimeStamp.QuadPart = PARADNIS_GET_LAST_INTERRUPT_TIMESTAMP(p);
+        pSave->LastInterruptTimeStamp.QuadPart = PARANDIS_GET_LAST_INTERRUPT_TIMESTAMP(p);
         pSave->LastTxCompletionTimeStamp = p->LastTxCompletionTimeStamp;
         ParaNdis_CallOnBugCheck(p);
         ++n;

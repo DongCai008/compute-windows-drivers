@@ -5,7 +5,7 @@ extern "C"
 
 #include "osdep.h"
 #include "virtio_pci.h"
-#include "VirtIO.h"
+#include "virtio.h"
 
 #include "ethernetutils.h"
 }
@@ -14,6 +14,7 @@ extern "C"
 #include "virtio_net.h"
 
 class CNB;
+class CTXVirtQueue;
 typedef struct _tagPARANDIS_ADAPTER *PPARANDIS_ADAPTER;
 
 typedef enum
@@ -111,7 +112,7 @@ public:
         return m_Headers.Allocate() && (!m_Indirect || m_IndirectArea.Allocate(PAGE_SIZE));
     }
 
-    SubmitTxPacketResult Enqueue(struct virtqueue *VirtQueue, ULONG TotalDescriptors, ULONG FreeDescriptors);
+    SubmitTxPacketResult Enqueue(CTXVirtQueue *Queue, ULONG TotalDescriptors, ULONG FreeDescriptors);
 
     CTXHeaders &HeadersAreaAccessor()
     { return m_Headers; }
@@ -151,7 +152,7 @@ public:
         : m_DrvHandle(NULL)
         , m_Index(0xFFFFFFFF)
         , m_IODevice(NULL)
-        , m_UsePublishedIndices(false)
+        , m_CanTouchHardware(true)
     {}
 
     virtual ~CVirtQueue()
@@ -161,15 +162,38 @@ public:
 
     bool Create(UINT Index,
         VirtIODevice *IODevice,
-        NDIS_HANDLE DrvHandle,
-        bool UsePublishedIndices);
+        NDIS_HANDLE DrvHandle);
 
     ULONG GetRingSize()
-    { return VirtIODeviceGetQueueSize(m_VirtQueue); }
+    { return virtio_get_queue_size(m_VirtQueue); }
 
     void Renew();
 
-    void Shutdown();
+    void Shutdown()
+    {
+        if (CanTouchHardware())
+        {
+            virtqueue_shutdown(m_VirtQueue);
+        }
+        Delete();
+    }
+
+    void DoNotTouchHardware()
+    {
+        m_CanTouchHardware = false;
+    }
+
+    void AllowTouchHardware()
+    {
+        m_CanTouchHardware = true;
+    }
+
+    bool CanTouchHardware()
+    {
+        return m_CanTouchHardware;
+    }
+
+    u16 SetMSIVector(u16 vector);
 
     int AddBuf(struct VirtIOBufferDescriptor sg[],
         unsigned int out_num,
@@ -180,9 +204,6 @@ public:
     { return virtqueue_add_buf(m_VirtQueue, sg, out_num, in_num, data, 
           va_indirect, phys_indirect); }
 
-    void KickAlways()
-    { virtqueue_kick(m_VirtQueue); }
-
     void* GetBuf(unsigned int *len)
     { return virtqueue_get_buf(m_VirtQueue, len); }
 
@@ -190,8 +211,24 @@ public:
     void Kick()
     { virtqueue_kick(m_VirtQueue); }
 
+    //TODO: Needs review / temporary
+    void KickAlways()
+    { virtqueue_notify(m_VirtQueue); }
+
     bool Restart()
-    { return virtqueue_enable_cb(m_VirtQueue); }
+    {
+        if (!virtqueue_enable_cb(m_VirtQueue))
+        {
+            virtqueue_disable_cb(m_VirtQueue);
+            return false;
+        }
+
+        return true;
+    }
+
+    //TODO: Needs review/temporary?
+    void EnableInterruptsDelayed()
+    { virtqueue_enable_cb_delayed(m_VirtQueue); }
 
     //TODO: Needs review/temporary?
     void EnableInterrupts()
@@ -201,10 +238,6 @@ public:
     void DisableInterrupts()
     { virtqueue_disable_cb(m_VirtQueue); }
 
-    //TODO: Needs review/temporary?
-    bool IsInterruptEnabled()
-    { return virtqueue_is_interrupt_enabled(m_VirtQueue) ? true : false; }
-
 protected:
     NDIS_HANDLE m_DrvHandle;
 
@@ -212,19 +245,19 @@ private:
     bool AllocateQueueMemory();
     void Delete();
 
+    bool m_CanTouchHardware;
+
     UINT m_Index;
     VirtIODevice *m_IODevice;
 
     CNdisSharedMemory m_SharedMemory;
-    bool m_UsePublishedIndices;
-
-protected:
-    //TODO: Temporary, must to be private
     struct virtqueue *m_VirtQueue = nullptr;
 
     CVirtQueue(const CVirtQueue&) = delete;
     CVirtQueue& operator= (const CVirtQueue&) = delete;
 };
+
+typedef CNdisList<CNB, CRawAccess, CNonCountingObject> CRawCNBList;
 
 class CTXVirtQueue : public CVirtQueue
 {
@@ -237,46 +270,15 @@ public:
     bool Create(UINT Index,
         VirtIODevice *IODevice,
         NDIS_HANDLE DrvHandle,
-        bool UsePublishedIndices,
         ULONG MaxBuffers,
         ULONG HeaderSize,
         PPARANDIS_ADAPTER Context);
 
     SubmitTxPacketResult SubmitPacket(CNB &NB);
 
-    //TODO: Temporary, needs review
-    UINT VirtIONetReleaseTransmitBuffers();
-
-    //TODO: Needs review
-    void ProcessTXCompletions();
-
-    //TODO: Needs review
-    void OnTransmitBufferReleased(CTXDescriptor *TXDescriptor);
-
-    //TODO: Needs review / temporary
-    void Kick()
-    {
-        virtqueue_kick(m_VirtQueue);
-    }
-
-    //TODO: Needs review / temporary
-    bool Restart()
-    { return virtqueue_enable_cb(m_VirtQueue); }
-
-    bool HasPacketsInHW()
-    { return !m_DescriptorsInUse.IsEmpty(); }
-
-    //TODO: Needs review/temporary?
-    void EnableInterrupts()
-    { virtqueue_enable_cb(m_VirtQueue); }
-
-    //TODO: Needs review/temporary?
-    void DisableInterrupts()
-    { virtqueue_disable_cb(m_VirtQueue); }
-
-    //TODO: Needs review/temporary?
-    bool IsInterruptEnabled()
-    { return virtqueue_is_interrupt_enabled(m_VirtQueue) ? true : false; }
+    void ProcessTXCompletions(CRawCNBList& listDone, bool bKill = false);
+    bool Alive()
+    { return !m_Killed; }
 
     //TODO: Needs review/temporary?
     ULONG GetFreeTXDescriptors()
@@ -290,6 +292,8 @@ public:
     void Shutdown();
 
 private:
+    UINT ReleaseTransmitBuffers(CRawCNBList& listDone);
+    void ReleaseOneBuffer(CTXDescriptor *TXDescriptor, CRawCNBList& listDone);
     bool PrepareBuffers();
     void FreeBuffers();
     ULONG m_MaxBuffers;
@@ -309,6 +313,7 @@ private:
 
     struct VirtIOBufferDescriptor *m_SGTable = nullptr;
     ULONG m_SGTableCapacity = 0;
+    bool  m_Killed = false;
 
     //TODO Temporary, must go way
     PPARANDIS_ADAPTER m_Context;

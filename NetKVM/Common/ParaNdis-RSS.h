@@ -53,6 +53,8 @@ typedef struct _tagPARANDIS_RSS_PARAMS
     PARANDIS_HASHING_SETTINGS ActiveHashingSettings;
     PARANDIS_SCALING_SETTINGS ActiveRSSScalingSettings;
 
+    BOOLEAN ForceUdpRSS;
+
     mutable CNdisRWLock                 rwLock;
 } PARANDIS_RSS_PARAMS, *PPARANDIS_RSS_PARAMS;
 

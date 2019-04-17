@@ -27,7 +27,6 @@
 * SUCH DAMAGE. */
 #include <pshpack1.h>
 #include <linux/types.h>
-#include <linux/virtio_ids.h>
 //#include <linux/virtio_config.h>
 #include <linux/virtio_types.h>
 #include <linux/if_ether.h>
@@ -35,6 +34,8 @@
 /* The feature bitmap for virtio net */
 #define VIRTIO_NET_F_CSUM	0	/* Host handles pkts w/ partial csum */
 #define VIRTIO_NET_F_GUEST_CSUM	1	/* Guest handles pkts w/ partial csum */
+#define VIRTIO_NET_F_CTRL_GUEST_OFFLOADS	2	/* Dynamic offload configuration. */
+#define VIRTIO_NET_F_MTU	3	/* Initial MTU advice */
 #define VIRTIO_NET_F_MAC	5	/* Host has given MAC address. */
 #define VIRTIO_NET_F_GUEST_TSO4	7	/* Guest can handle TSOv4 in. */
 #define VIRTIO_NET_F_GUEST_TSO6	8	/* Guest can handle TSOv6 in. */
@@ -55,6 +56,10 @@
 #define VIRTIO_NET_F_MQ	22	/* Device supports Receive Flow
 					 * Steering */
 #define VIRTIO_NET_F_CTRL_MAC_ADDR 23	/* Set MAC address */
+#define VIRTIO_NET_F_GUEST_RSC4 41	/* Guest can handle coalesced IPv4 tcp packets. */
+#define VIRTIO_NET_F_GUEST_RSC6 42	/* Guest can handle coalesced IPv6 tcp packets. */
+
+#define VIRTIO_NET_F_SPEED_DUPLEX 63	/* Device set linkspeed and duplex */
 
 #ifndef VIRTIO_NET_NO_LEGACY
 #define VIRTIO_NET_F_GSO	6	/* Host handles pkts w/ any GSO type */
@@ -73,7 +78,25 @@ struct virtio_net_config {
 	 * Legal values are between 1 and 0x8000
 	 */
 	__u16 max_virtqueue_pairs;
+	/* Default maximum transmit unit advice */
+	__u16 mtu;
+	/*
+	* speed, in units of 1Mb. All values 0 to INT_MAX are legal.
+	* Any other value stands for unknown.
+	*/
+	__u32 speed;
+	/*
+	* 0x00 - half duplex
+	* 0x01 - full duplex
+	* Any other value stands for unknown.
+	*/
+	__u8 duplex;
 } __attribute__((packed));
+
+#define VIRTIO_NET_DUPLEX_UNKNOWN                      0xff
+#define VIRTIO_NET_DUPLEX_HALF                         0x00
+#define VIRTIO_NET_DUPLEX_FULL                         0x01
+#define VIRTIO_NET_SPEED_UNKNOWN                       -1
 
 /*
  * This header comes first in the scatter-gather list.  If you don't
@@ -90,6 +113,9 @@ struct virtio_net_hdr_v1 {
 #define VIRTIO_NET_HDR_GSO_TCPV4	1	/* GSO frame, IPv4 TCP (TSO) */
 #define VIRTIO_NET_HDR_GSO_UDP		3	/* GSO frame, IPv4 UDP (UFO) */
 #define VIRTIO_NET_HDR_GSO_TCPV6	4	/* GSO frame, IPv6 TCP */
+#define VIRTIO_NET_HDR_RSC_NONE	5	/* No packets coalesced */
+#define VIRTIO_NET_HDR_RSC_TCPV4	6	/* IPv4 TCP coalesced */
+#define VIRTIO_NET_HDR_RSC_TCPV6	7	/* IPv6 TCP coalesced */
 #define VIRTIO_NET_HDR_GSO_ECN		0x80	/* TCP has ECN set */
 	__u8 gso_type;
 	__virtio16 hdr_len;	/* Ethernet + IP + tcp/udp hdrs */
@@ -97,6 +123,14 @@ struct virtio_net_hdr_v1 {
 	__virtio16 csum_start;	/* Position to start checksumming from */
 	__virtio16 csum_offset;	/* Offset after that to place checksum */
 	__virtio16 num_buffers;	/* Number of merged rx buffers */
+};
+
+/* This is the header to use when either one or both of GUEST_RSC4/6
+ * features have been negotiated. */
+struct virtio_net_hdr_rsc {
+	struct virtio_net_hdr_v1 hdr;
+	__virtio16 rsc_pkts;	/* Number of coalesced packets */
+	__virtio16 rsc_dup_acks;	/* Duplicated ack packets */
 };
 
 #ifndef VIRTIO_NET_NO_LEGACY
@@ -141,7 +175,7 @@ typedef __u8 virtio_net_ctrl_ack;
 #define VIRTIO_NET_ERR    1
 
 /*
- * Control the RX mode, ie. promisucous, allmulti, etc...
+ * Control the RX mode, ie. promiscuous, allmulti, etc...
  * All commands require an "out" sg entry containing a 1 byte
  * state value, zero = disable, non-zero = enable.  Commands
  * 0 and 1 are supported with the VIRTIO_NET_F_CTRL_RX feature.
@@ -189,7 +223,7 @@ struct virtio_net_ctrl_mac {
  * The VLAN filter table is controlled via a simple ADD/DEL interface.
  * VLAN IDs not added may be filterd by the hypervisor.  Del is the
  * opposite of add.  Both commands expect an out entry containing a 2
- * byte VLAN ID.  VLAN filterting is available with the
+ * byte VLAN ID.  VLAN filtering is available with the
  * VIRTIO_NET_F_CTRL_VLAN feature bit.
  */
 #define VIRTIO_NET_CTRL_VLAN       2
@@ -200,7 +234,7 @@ struct virtio_net_ctrl_mac {
  * Control link announce acknowledgement
  *
  * The command VIRTIO_NET_CTRL_ANNOUNCE_ACK is used to indicate that
- * driver has recevied the notification; device would clear the
+ * driver has received the notification; device would clear the
  * VIRTIO_NET_S_ANNOUNCE bit in the status field after it receives
  * this command.
  */
@@ -235,15 +269,6 @@ struct virtio_net_ctrl_mq {
 */
 #define VIRTIO_NET_CTRL_GUEST_OFFLOADS    5
  #define VIRTIO_NET_CTRL_GUEST_OFFLOADS_SET        0
-
-/*
-* Control network offloads
-*
-* Dynamic offloads are available with the
-* VIRTIO_NET_F_CTRL_GUEST_OFFLOADS feature bit.
-*/
-#define VIRTIO_NET_CTRL_GUEST_OFFLOADS       5
-#define VIRTIO_NET_CTRL_GUEST_OFFLOADS_SET   0
 
 #include <poppack.h>
 

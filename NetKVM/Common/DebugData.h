@@ -1,8 +1,4 @@
-/**********************************************************************
- * Copyright (c) 2008-2015 Red Hat, Inc.
- *
- * File: DebugData.h
- *
+/*
  * This file contains definitions and data structures, common between
  * NDIS driver and debugger helper unit, processing crash dump with built-in
  * data provided by the driver.
@@ -10,10 +6,31 @@
  * Included in NetKVM NDIS kernel driver for Windows.
  * Included in NetKVMDumpParser application.
  *
- * This work is licensed under the terms of the GNU GPL, version 2.  See
- * the COPYING file in the top-level directory.
+ * Copyright (c) 2008-2017 Red Hat, Inc.
  *
-**********************************************************************/
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met :
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and / or other materials provided with the distribution.
+ * 3. Neither the names of the copyright holders nor the names of their contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.IN NO EVENT SHALL THE COPYRIGHT HOLDERS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
 
 #ifndef PARANDIS_DEBUG_DATA_H
 #define PARANDIS_DEBUG_DATA_H
@@ -71,9 +88,11 @@ typedef struct _tagBugCheckDataLocation
     UINT64              Size;
 }tBugCheckDataLocation;
 
-#define PARANDIS_DEBUG_STATIC_DATA_VERSION          0
+#define PARANDIS_DEBUG_STATIC_DATA_VERSION          1
 #define PARANDIS_DEBUG_PER_NIC_DATA_VERSION         0
 #define PARANDIS_DEBUG_HISTORY_DATA_VERSION         1
+#define PARANDIS_DEBUG_PENDING_NBL_ENTRY_VERSION    0
+
 /* This structure is NOT changeable */
 typedef struct _tagBugCheckStaticDataContent_V0
 {
@@ -87,13 +106,13 @@ typedef struct _tagBugCheckStaticDataContent_V0
 #define PARANDIS_DEBUG_INTERRUPTS
 
 #ifdef PARANDIS_DEBUG_INTERRUPTS
-#   define PARADNIS_STORE_LAST_INTERRUPT_TIMESTAMP(p) \
+#   define PARANDIS_STORE_LAST_INTERRUPT_TIMESTAMP(p) \
         NdisGetCurrentSystemTime(&(p)->LastInterruptTimeStamp)
-#   define PARADNIS_GET_LAST_INTERRUPT_TIMESTAMP(p) \
+#   define PARANDIS_GET_LAST_INTERRUPT_TIMESTAMP(p) \
         (p)->LastInterruptTimeStamp.QuadPart
 #else
-#   define PARADNIS_STORE_LAST_INTERRUPT_TIMESTAMP(p)
-#   define PARADNIS_GET_LAST_INTERRUPT_TIMESTAMP(p) (0)
+#   define PARANDIS_STORE_LAST_INTERRUPT_TIMESTAMP(p)
+#   define PARANDIS_GET_LAST_INTERRUPT_TIMESTAMP(p) (0)
 #endif
 
 typedef struct _tagBugCheckPerNicDataContent_V0
@@ -128,9 +147,31 @@ typedef struct _tagBugCheckHistoryDataEntry_V1
     ULONG               lParam4;
 }tBugCheckHistoryDataEntry_V1;
 
+typedef struct _tagPendingNBlEntry_V0
+{
+    UINT64              NBL;
+    LARGE_INTEGER       TimeStamp;
+}tPendingNBlEntry_V0;
+
+#if (PARANDIS_DEBUG_PENDING_NBL_ENTRY_VERSION == 0)
+typedef tPendingNBlEntry_V0 tPendingNBlEntry;
+#elif (PARANDIS_DEBUG_PENDING_NBL_ENTRY_VERSION == 1)
+typedef tPendingNBlEntry_V1 tPendingNBlEntry;
+#endif
+
+typedef struct _tagBugCheckStaticDataContent_V1
+{
+    tBugCheckStaticDataContent_V0 StaticDataV0;
+    ULONG64             PendingNblData;
+    ULONG               MaxPendingNbl;
+    USHORT              PendingNblEntryVersion;
+    USHORT              fNBLOverflow;
+}tBugCheckStaticDataContent_V1;
 
 #if (PARANDIS_DEBUG_STATIC_DATA_VERSION == 0)
 typedef tBugCheckStaticDataContent_V0 tBugCheckStaticDataContent;
+#elif (PARANDIS_DEBUG_STATIC_DATA_VERSION == 1)
+typedef tBugCheckStaticDataContent_V1 tBugCheckStaticDataContent;
 #endif
 
 #if (PARANDIS_DEBUG_PER_NIC_DATA_VERSION == 0)
@@ -142,13 +183,6 @@ typedef tBugCheckHistoryDataEntry_V0 tBugCheckHistoryDataEntry;
 #elif (PARANDIS_DEBUG_HISTORY_DATA_VERSION == 1)
 typedef tBugCheckHistoryDataEntry_V1 tBugCheckHistoryDataEntry;
 #endif
-
-typedef struct _tagBugCheckStaticDataContent_V1
-{
-    UINT64              res1;
-    UINT64              res2;
-    UINT64              History;
-}tBugCheckStaticDataContent_V1;
 
 typedef struct _tagBugCheckPerNicDataContent_V1
 {

@@ -1,10 +1,4 @@
-#include <windows.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <tchar.h>
-
-#include "utils.h"
-#include "service.h"
+#include "stdafx.h"
 
 LPWSTR ServiceName = L"BalloonService";
 LPWSTR DisplayName = L"Balloon Service";
@@ -35,7 +29,7 @@ ULONG
 _cdecl
 wmain(
     __in              ULONG argc,
-    __in_ecount(Argc) PWCHAR argv[]
+    __in_ecount(argc) PWCHAR argv[]
     )
 {
     if(argc == 2)

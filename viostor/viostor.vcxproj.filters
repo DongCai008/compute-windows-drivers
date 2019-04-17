@@ -19,7 +19,7 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <Inf Include="WinLH.inx">
+    <Inf Include="viostor.inx">
       <Filter>Driver Files</Filter>
     </Inf>
   </ItemGroup>
@@ -31,6 +31,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="virtio_stor_utils.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="virtio_stor_trace.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

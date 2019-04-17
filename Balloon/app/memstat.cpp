@@ -1,5 +1,4 @@
-#include "memstat.h"
-#include "utils.h"
+#include "stdafx.h"
 
 CMemStat::CMemStat()
 {
@@ -26,7 +25,7 @@ BOOL CMemStat::Init()
                             COINIT_MULTITHREADED);
     if (FAILED(status)) {
         PrintMessage("Cannot initialize COM");
-        return status;
+        return FALSE;
     }
     initialized = TRUE;
 
@@ -93,6 +92,7 @@ BOOL CMemStat::Init()
 
 BOOL CMemStat::Update()
 {
+    SYSTEM_INFO sysinfo;
     MEMORYSTATUSEX statex = {sizeof(statex)};
     CComPtr< IEnumWbemClassObject > enumerator;
     CComPtr< IWbemClassObject > memory;
@@ -100,10 +100,15 @@ BOOL CMemStat::Update()
     _variant_t var_val;
     HRESULT status  = S_OK;
     UINT idx = 0;
+    SIZE_T minCacheSize = 0;
+    SIZE_T maxCacheSize = 0;
+    DWORD  flags = 0;
+
+    GetSystemInfo(&sysinfo);
 
     status = service->ExecQuery(
                              L"WQL",
-                             L"SELECT * FROM Win32_PerfFormattedData_PerfOS_Memory",
+                             L"SELECT * FROM Win32_PerfRawData_PerfOS_Memory",
                              WBEM_FLAG_FORWARD_ONLY | WBEM_FLAG_RETURN_IMMEDIATELY,
                              NULL,
                              &enumerator
@@ -114,18 +119,16 @@ BOOL CMemStat::Update()
         return FALSE;
     }
 
-    while(enumerator)
-    {
-        status = enumerator->Next(
-                             WBEM_INFINITE,
-                             1L,
-                             &memory,
-                             &retcnt
-                             );
-        if (retcnt == 0) {
-            break;
-        }
+    if (enumerator == NULL || FAILED(enumerator->Next(
+            WBEM_INFINITE,
+            1L,
+            &memory,
+            &retcnt))) {
+        PrintMessage("Cannot enumerate results");
+        return FALSE;
+    }
 
+    if (retcnt > 0) {
         status = memory->Get( 
                              L"PagesInputPerSec",
                              0,
@@ -136,10 +139,10 @@ BOOL CMemStat::Update()
 
         if (FAILED(status) || (var_val.vt == VT_NULL)) {
             PrintMessage("Cannot get PagesInputPerSec");
-            var_val.vt =  -1;
+            var_val = (__int64)-1;
         }
         m_Stats[idx].tag = VIRTIO_BALLOON_S_SWAP_IN;
-        m_Stats[idx].val = (long)var_val;
+        m_Stats[idx].val = (__int64)var_val * sysinfo.dwPageSize;
         idx++;
 
         status = memory->Get( 
@@ -152,10 +155,10 @@ BOOL CMemStat::Update()
 
         if (FAILED(status) || (var_val.vt == VT_NULL)) {
             PrintMessage("Cannot get PagesOutputPerSec");
-            var_val.vt =  -1;
+            var_val = (__int64)-1;
         }
         m_Stats[idx].tag = VIRTIO_BALLOON_S_SWAP_OUT;
-        m_Stats[idx].val = (long)var_val;
+        m_Stats[idx].val = (__int64)var_val * sysinfo.dwPageSize;
         idx++;
 
         status = memory->Get( 
@@ -168,7 +171,7 @@ BOOL CMemStat::Update()
 
         if (FAILED(status) || (var_val.vt == VT_NULL)) {
             PrintMessage("Cannot get PageReadsPerSec");
-            var_val.vt =  -1;
+            var_val = (__int64)-1;
         }
         m_Stats[idx].tag = VIRTIO_BALLOON_S_MAJFLT;
         m_Stats[idx].val = (long)var_val;
@@ -184,7 +187,7 @@ BOOL CMemStat::Update()
 
         if (FAILED(status) || (var_val.vt == VT_NULL)) {
             PrintMessage("Cannot get PageFaultsPerSec");
-            var_val.vt =  -1;
+            var_val = (__int64)-1;
         }
         m_Stats[idx].tag = VIRTIO_BALLOON_S_MINFLT;
         m_Stats[idx].val = (long)var_val;
@@ -198,6 +201,27 @@ BOOL CMemStat::Update()
 
         m_Stats[idx].tag = VIRTIO_BALLOON_S_MEMTOT;
         m_Stats[idx].val = statex.ullTotalPhys;
+        idx++;
+
+        status = memory->Get(
+                             L"CacheBytes",
+                             0,
+                             &var_val,
+                             NULL,
+                             NULL
+                             );
+
+        if (FAILED(status) || (var_val.vt == VT_NULL)) {
+            PrintMessage("Cannot get CacheBytes");
+            var_val.vt = 0;
+        }
+        else if (GetSystemFileCacheSize(&minCacheSize, &maxCacheSize, &flags) &&
+                (flags & FILE_CACHE_MIN_HARD_ENABLE) &&
+                ((ULONGLONG)var_val > minCacheSize)) {
+            var_val = (ULONGLONG)var_val - minCacheSize;
+        }
+        m_Stats[idx].tag = VIRTIO_BALLOON_S_AVAIL;
+        m_Stats[idx].val = statex.ullAvailPhys + (ULONGLONG)var_val/2;
     }
     return TRUE;
 }

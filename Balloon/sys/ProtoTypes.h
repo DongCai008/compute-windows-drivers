@@ -1,17 +1,32 @@
-/**********************************************************************
- * Copyright (c) 2009-2015 Red Hat, Inc.
- *
- * File: precomp.h
- *
- * Author(s):
- *
+/*
  * Main include file
  * This file contains various routines and globals
  *
- * This work is licensed under the terms of the GNU GPL, version 2.  See
- * the COPYING file in the top-level directory.
+ * Copyright (c) 2009-2017 Red Hat, Inc.
  *
-**********************************************************************/
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met :
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and / or other materials provided with the distribution.
+ * 3. Neither the names of the copyright holders nor the names of their contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.IN NO EVENT SHALL THE COPYRIGHT HOLDERS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
 #if !defined(_PROTOTYPES_H_)
 #define _PROTOTYPES_H_
 
@@ -33,7 +48,6 @@ typedef struct _VIRTIO_BALLOON_CONFIG
 }VIRTIO_BALLOON_CONFIG, *PVIRTIO_BALLOON_CONFIG;
 
 
-typedef VirtIODevice VIODEVICE, *PVIODEVICE;
 typedef struct virtqueue VIOQUEUE, *PVIOQUEUE;
 typedef struct VirtIOBufferDescriptor VIO_SG, *PVIO_SG;
 
@@ -46,16 +60,18 @@ typedef struct {
 
 typedef struct _DEVICE_CONTEXT {
     WDFINTERRUPT            WdfInterrupt;
-    WDFREQUEST              PendingWriteRequest;
     PUCHAR                  PortBase;
     ULONG                   PortCount;
     BOOLEAN                 PortMapped;
     PKEVENT                 evLowMem;
     HANDLE                  hLowMem;
-    VIODEVICE               VDevice;
+    VIRTIO_WDF_DRIVER       VDevice;
     PVIOQUEUE               InfVirtQueue;
     PVIOQUEUE               DefVirtQueue;
     PVIOQUEUE               StatVirtQueue;
+
+    WDFSPINLOCK             StatQueueLock;
+    WDFSPINLOCK             InfDefQueueLock;
 
     KEVENT                  HostAckEvent;
 
@@ -70,7 +86,14 @@ typedef struct _DEVICE_CONTEXT {
     KEVENT                  WakeUpThread;
     PKTHREAD                Thread;
     BOOLEAN                 bShutDown;
+
+#ifdef USE_BALLOON_SERVICE
+    WDFREQUEST              PendingWriteRequest;
     BOOLEAN                 HandleWriteRequest;
+#else // USE_BALLOON_SERVICE
+    WDFWORKITEM             StatWorkItem;
+    LONG                    WorkCount;
+#endif //USE_BALLOON_SERVICE
 
 } DEVICE_CONTEXT, *PDEVICE_CONTEXT;
 
@@ -78,22 +101,34 @@ WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(DEVICE_CONTEXT, GetDeviceContext);
 
 #define BALLOON_MGMT_POOL_TAG 'mtlB'
 
+#ifndef _IRQL_requires_
+#define _IRQL_requires_(level)
+#endif
+
 EVT_WDF_DRIVER_DEVICE_ADD BalloonDeviceAdd;
 KSTART_ROUTINE            BalloonRoutine;
 DRIVER_INITIALIZE DriverEntry;
-EVT_WDF_OBJECT_CONTEXT_CLEANUP EvtDriverContextCleanup;
-EVT_WDF_DEVICE_CONTEXT_CLEANUP                 BalloonEvtDeviceContextCleanup;
+
+// Context cleanup callbacks generally run at IRQL <= DISPATCH_LEVEL but
+// WDFDRIVER and WDFDEVICE cleanup is guaranteed to run at PASSIVE_LEVEL.
+// Annotate the prototypes to make static analysis happy.
+EVT_WDF_OBJECT_CONTEXT_CLEANUP                 _IRQL_requires_(PASSIVE_LEVEL) EvtDriverContextCleanup;
+EVT_WDF_DEVICE_CONTEXT_CLEANUP                 _IRQL_requires_(PASSIVE_LEVEL) BalloonEvtDeviceContextCleanup;
+
 EVT_WDF_DEVICE_PREPARE_HARDWARE                BalloonEvtDevicePrepareHardware;
 EVT_WDF_DEVICE_RELEASE_HARDWARE                BalloonEvtDeviceReleaseHardware;
 EVT_WDF_DEVICE_D0_ENTRY                        BalloonEvtDeviceD0Entry;
 EVT_WDF_DEVICE_D0_EXIT                         BalloonEvtDeviceD0Exit;
 EVT_WDF_DEVICE_D0_EXIT_PRE_INTERRUPTS_DISABLED BalloonEvtDeviceD0ExitPreInterruptsDisabled;
-EVT_WDF_FILE_CLOSE                             BalloonEvtFileClose;
 EVT_WDF_INTERRUPT_ISR                          BalloonInterruptIsr;
 EVT_WDF_INTERRUPT_DPC                          BalloonInterruptDpc;
 EVT_WDF_INTERRUPT_ENABLE                       BalloonInterruptEnable;
 EVT_WDF_INTERRUPT_DISABLE                      BalloonInterruptDisable;
-
+#ifdef USE_BALLOON_SERVICE
+EVT_WDF_FILE_CLOSE                             BalloonEvtFileClose;
+#else // USE_BALLOON_SERVICE
+EVT_WDF_WORKITEM                               StatWorkItemWorker;
+#endif // USE_BALLOON_SERVICE
 
 VOID
 BalloonInterruptDpc(
@@ -200,11 +235,6 @@ BalloonGetSize(
     );
 
 NTSTATUS
-BalloonQueueInitialize(
-    IN WDFDEVICE hDevice
-    );
-
-NTSTATUS
 BalloonCloseWorkerThread(
     IN WDFDEVICE  Device
     );
@@ -219,7 +249,6 @@ IsLowMemory(
     IN WDFOBJECT    WdfDevice
     )
 {
-#if (WINVER >= 0x0501)
     LARGE_INTEGER       TimeOut = {0};
     PDEVICE_CONTEXT     devCtx = GetDeviceContext(WdfDevice);
 
@@ -232,8 +261,19 @@ IsLowMemory(
                                  FALSE,
                                  &TimeOut));
     }
-#endif // (WINVER >= 0x0501)
     return FALSE;
 }
+
+#ifdef USE_BALLOON_SERVICE
+NTSTATUS
+BalloonQueueInitialize(
+    IN WDFDEVICE hDevice
+    );
+#else // USE_BALLOON_SERVICE
+NTSTATUS
+StatInitializeWorkItem(
+    IN WDFDEVICE Device
+    );
+#endif // USE_BALLOON_SERVICE
 
 #endif  // _PROTOTYPES_H_

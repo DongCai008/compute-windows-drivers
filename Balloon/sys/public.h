@@ -1,6 +1,7 @@
 #ifndef PUBLIC_H
 #define PUBLIC_H
 
+#include <initguid.h>
 // {E18B5FB3-04E4-42fc-9601-8395C217391B}
 DEFINE_GUID(GUID_DEVINTERFACE_BALLOON,
 0xe18b5fb3, 0x4e4, 0x42fc, 0x96, 0x1, 0x83, 0x95, 0xc2, 0x17, 0x39, 0x1b);
@@ -11,7 +12,8 @@ DEFINE_GUID(GUID_DEVINTERFACE_BALLOON,
 #define VIRTIO_BALLOON_S_MINFLT   3   /* Number of minor faults */
 #define VIRTIO_BALLOON_S_MEMFREE  4   /* Total amount of free memory */
 #define VIRTIO_BALLOON_S_MEMTOT   5   /* Total amount of memory */
-#define VIRTIO_BALLOON_S_NR       6
+#define VIRTIO_BALLOON_S_AVAIL    6   /* Available memory */
+#define VIRTIO_BALLOON_S_NR       7
 
 #pragma pack (push)
 #pragma pack (1)

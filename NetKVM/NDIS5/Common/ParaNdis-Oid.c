@@ -1,14 +1,31 @@
-/**********************************************************************
- * Copyright (c) 2008-2015 Red Hat, Inc.
- *
- * File: ParaNdis6-Oid.c
- *
+/*
  * This file contains NDIS OID support procedures, common for NDIS5 and NDIS6
  *
- * This work is licensed under the terms of the GNU GPL, version 2.  See
- * the COPYING file in the top-level directory.
+ * Copyright (c) 2008-2017 Red Hat, Inc.
  *
-**********************************************************************/
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met :
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and / or other materials provided with the distribution.
+ * 3. Neither the names of the copyright holders nor the names of their contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.IN NO EVENT SHALL THE COPYRIGHT HOLDERS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
 #include "ParaNdis-Oid.h"
 
 #ifdef WPP_EVENT_TRACING
@@ -513,31 +530,10 @@ const char *ParaNdis_OidName(NDIS_OID oid)
     MAKECASE(OID_802_3_XMIT_LATE_COLLISIONS)
     MAKECASE(OID_GEN_MACHINE_NAME)
     MAKECASE(OID_TCP_TASK_OFFLOAD)
-#if NDIS_SUPPORT_NDIS6
-    MAKECASE(OID_GEN_STATISTICS)
-    MAKECASE(OID_GEN_INTERRUPT_MODERATION)
-#endif
     MAKECASE(OID_TCP_OFFLOAD_PARAMETERS)
     MAKECASE(OID_OFFLOAD_ENCAPSULATION)
     MAKECASE(OID_IP4_OFFLOAD_STATS)
     MAKECASE(OID_IP6_OFFLOAD_STATS)
-#if NDIS_SUPPORT_NDIS61
-MAKECASE(OID_TCP_TASK_IPSEC_OFFLOAD_V2_ADD_SA)
-MAKECASE(OID_TCP_TASK_IPSEC_OFFLOAD_V2_DELETE_SA)
-MAKECASE(OID_TCP_TASK_IPSEC_OFFLOAD_V2_UPDATE_SA)
-#endif
-#if NDIS_SUPPORT_NDIS620
-    MAKECASE(OID_PM_CURRENT_CAPABILITIES)
-    MAKECASE(OID_PM_HARDWARE_CAPABILITIES)
-    MAKECASE(OID_PM_PARAMETERS)
-    MAKECASE(OID_PM_ADD_WOL_PATTERN)
-    MAKECASE(OID_PM_REMOVE_WOL_PATTERN)
-    MAKECASE(OID_PM_WOL_PATTERN_LIST)
-    MAKECASE(OID_PM_ADD_PROTOCOL_OFFLOAD)
-    MAKECASE(OID_PM_GET_PROTOCOL_OFFLOAD)
-    MAKECASE(OID_PM_REMOVE_PROTOCOL_OFFLOAD)
-    MAKECASE(OID_PM_PROTOCOL_OFFLOAD_LIST)
-#endif
     default:
         {
             static UCHAR buffer[9];

@@ -1,5 +1,6 @@
 #pragma once
 #include "ParaNdis-VirtQueue.h"
+#include "Parandis_DesignPatterns.h"
 
 class CParaNdisAbstractPath
 {
@@ -35,7 +36,7 @@ public:
         return m_queueIndex;
     }
 
-    virtual NDIS_STATUS SetupMessageIndex(u16 queueCardinal);
+    virtual NDIS_STATUS SetupMessageIndex(u16 vector);
 
     /* TODO - Path classes should inherit from CVirtQueue*/
     virtual void DisableInterrupts()
@@ -53,12 +54,12 @@ public:
         m_pVirtQueue->Renew();
     }
 
-    bool IsInterruptEnabled()
-    {
-        return m_pVirtQueue->IsInterruptEnabled();
-    }
-
     ULONG getCPUIndex();
+
+    VOID SetLastInterruptTimestamp(LARGE_INTEGER timestamp)
+    {
+        m_LastInterruptTimeStamp = timestamp;
+    }
 
 #if NDIS_SUPPORT_NDIS620
     GROUP_AFFINITY DPCAffinity;
@@ -69,6 +70,7 @@ public:
 protected:
     PPARANDIS_ADAPTER m_Context;
     CVirtQueue *m_pVirtQueue;
+    LARGE_INTEGER m_LastInterruptTimeStamp;
 
     u16 m_messageIndex = (u16)-1;
     u16 m_queueIndex = (u16)-1;
@@ -76,22 +78,53 @@ protected:
 };
 
 
-template <class VQ> class CParaNdisTemplatePath : public CParaNdisAbstractPath {
+template <class VQ> class CParaNdisTemplatePath : public CParaNdisAbstractPath, public CObserver<SMNotifications>{
 public:
-    CParaNdisTemplatePath() {
+    CParaNdisTemplatePath() : m_ObserverAdded(false) {
         m_pVirtQueue = &m_VirtQueue;
     }
 
+    bool CreatePath()
+    {
+        m_ObserverAdded = m_Context->m_StateMachine.Add(this) > 0;
+        return true;
+    }
+
+    ~CParaNdisTemplatePath() {
+        if (m_ObserverAdded)
+        {
+            m_Context->m_StateMachine.Remove(this);
+        }
+    }
 
     void Shutdown()
     {
-        TSpinLocker LockedContext(m_Lock);
+        TPassiveSpinLocker LockedContext(m_Lock);
         m_VirtQueue.Shutdown();
     }
 
+    static BOOLEAN _Function_class_(MINIPORT_SYNCHRONIZE_INTERRUPT)
+    RestartQueueSynchronously(PVOID ctx)
+    {
+        auto This = static_cast<CParaNdisTemplatePath<VQ>*>(ctx);
+        return !This->m_VirtQueue.Restart();
+    }
+
+    /* We get notified by the state machine on suprise removal or when the
+       device needs a reset*/
+    void Notify(SMNotifications message) override
+    {
+        if (message == SupriseRemoved || message == NeedsReset)
+        {
+            m_VirtQueue.DoNotTouchHardware();
+        }
+        else if (PoweredOn)
+        {
+            m_VirtQueue.AllowTouchHardware();
+        }
+    }
 protected:
     CNdisSpinLock m_Lock;
-
+    bool m_ObserverAdded;
     VQ m_VirtQueue;
-    tCompletePhysicalAddress m_VirtQueueRing;
 };

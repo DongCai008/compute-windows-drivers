@@ -1,19 +1,34 @@
-/**********************************************************************
- * Copyright (c) 2008-2015 Red Hat, Inc.
- *
- * File: ParaNdis-Driver.c
- *
+/*
  * This file contains driver-related part of NDIS5.X adapter driver.
  *
- * This work is licensed under the terms of the GNU GPL, version 2.  See
- * the COPYING file in the top-level directory.
+ * Copyright (c) 2008-2017 Red Hat, Inc.
  *
-**********************************************************************/
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met :
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and / or other materials provided with the distribution.
+ * 3. Neither the names of the copyright holders nor the names of their contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.IN NO EVENT SHALL THE COPYRIGHT HOLDERS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
 #include "ParaNdis5.h"
 
 //#define NO_XP_POWER_MANAGEMENT
-
-#if defined(NDIS51_MINIPORT) || defined(NDIS50_MINIPORT)
 
 #ifdef WPP_EVENT_TRACING
 #include "ParaNdis5-Driver.tmh"
@@ -107,13 +122,6 @@ static NDIS_STATUS ParaNdis5_Initialize(OUT PNDIS_STATUS OpenErrorStatus,
 #ifndef NO_XP_POWER_MANAGEMENT
             attributes |= NDIS_ATTRIBUTE_NO_HALT_ON_SUSPEND;
 #endif
-#ifdef NDIS50_MINIPORT
-            //TODO: this is wrong, I think
-            // this API is for XP and
-            // it should be used only if you never need virtual addresses of sent buffers
-            // so I comment it out
-            //attributes |= NDIS_ATTRIBUTE_USES_SAFE_BUFFER_APIS;
-#endif
             NdisMSetAttributesEx(
                 MiniportAdapterHandle,
                 pContext,
@@ -131,12 +139,6 @@ static NDIS_STATUS ParaNdis5_Initialize(OUT PNDIS_STATUS OpenErrorStatus,
         status = ParaNdis_FinishInitialization(pContext);
         if (status == NDIS_STATUS_SUCCESS)
         {
-#ifdef NDIS50_MINIPORT
-            NdisMRegisterAdapterShutdownHandler(
-                MiniportAdapterHandle,
-                pContext,
-                (ADAPTER_SHUTDOWN_HANDLER)ParaNdis5_Shutdown);
-#endif //NDIS50_MINIPORT
             ParaNdis_DebugRegisterMiniport(pContext, TRUE);
             ParaNdis_IndicateConnect(pContext, FALSE, TRUE);
             ParaNdis5_StopSend(pContext, FALSE, NULL);
@@ -357,10 +359,6 @@ static VOID ParaNdis5_MiniportISR(OUT PBOOLEAN InterruptRecognized,
     DEBUG_EXIT_STATUS(7, (ULONG)b);
 }
 
-
-
-#ifdef NDIS51_MINIPORT
-
 /*************************************************************
 Parameters:
 
@@ -375,9 +373,6 @@ VOID ParaNdis5_PnPEventNotify(IN NDIS_HANDLE MiniportAdapterContext,
     PARANDIS_ADAPTER *pContext = (PARANDIS_ADAPTER *)MiniportAdapterContext;
     ParaNdis_OnPnPEvent(pContext, PnPEvent, InformationBuffer, InformationBufferLength);
 }
-#endif /* NDIS51_MINIPORT */
-
-
 
 /*************************************************************
 Driver's entry point
@@ -429,11 +424,10 @@ NDIS_STATUS DriverEntry(PVOID DriverObject,PVOID RegistryPath)
         chars.ResetHandler              = ParaNdis5_Reset;
         chars.CheckForHangHandler       = ParaNdis5_CheckForHang; //optional
 
-#ifdef NDIS51_MINIPORT
         chars.CancelSendPacketsHandler  = ParaNdis5_CancelSendPackets;
         chars.PnPEventNotifyHandler     = ParaNdis5_PnPEventNotify;
         chars.AdapterShutdownHandler    = ParaNdis5_Shutdown;
-#endif
+
         status = NdisMRegisterMiniport(
             DriverHandle,
             &chars,
@@ -457,5 +451,3 @@ NDIS_STATUS DriverEntry(PVOID DriverObject,PVOID RegistryPath)
     DEBUG_EXIT_STATUS(status ? 0 : 4, status);
     return status;
 }
-
-#endif //#defined(NDIS51_MINIPORT) || defined(NDIS50_MINIPORT)

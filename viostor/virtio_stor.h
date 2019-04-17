@@ -1,35 +1,47 @@
-/**********************************************************************
- * Copyright (c) 2008-2015 Red Hat, Inc.
- *
- * File: virtio_stor.h
- *
+/*
  * Main include file
- * This file contains vrious routines and globals
+ * This file contains various routines and globals
  *
- * This work is licensed under the terms of the GNU GPL, version 2.  See
- * the COPYING file in the top-level directory.
+ * Copyright (c) 2008-2017 Red Hat, Inc.
  *
-**********************************************************************/
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met :
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and / or other materials provided with the distribution.
+ * 3. Neither the names of the copyright holders nor the names of their contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.IN NO EVENT SHALL THE COPYRIGHT HOLDERS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
 
 #ifndef ___VIOSTOR_H__
 #define ___VIOSTOR_H__
 
 #include <ntddk.h>
-#ifdef USE_STORPORT
-#define STOR_USE_SCSI_ALIASES
 #include <storport.h>
-#else
-#include <scsi.h>
-#endif
 
 #include "osdep.h"
 #include "virtio_pci.h"
-#include "virtio_config.h"
 #include "virtio.h"
 #include "virtio_ring.h"
+#include "virtio_stor_utils.h"
+#include "virtio_stor_hw_helper.h"
 
 typedef struct VirtIOBufferDescriptor VIO_SG, *PVIO_SG;
-
 
 /* Feature bits */
 #define VIRTIO_BLK_F_BARRIER    0       /* Does host support barriers? */
@@ -39,8 +51,10 @@ typedef struct VirtIOBufferDescriptor VIO_SG, *PVIO_SG;
 #define VIRTIO_BLK_F_RO         5       /* Disk is read-only */
 #define VIRTIO_BLK_F_BLK_SIZE   6       /* Block size of disk is available*/
 #define VIRTIO_BLK_F_SCSI       7       /* Supports scsi command passthru */
-#define VIRTIO_BLK_F_WCACHE     9       /* write cache enabled */
+#define VIRTIO_BLK_F_FLUSH      9       /* Flush command supported */
 #define VIRTIO_BLK_F_TOPOLOGY   10      /* Topology information is available */
+#define VIRTIO_BLK_F_CONFIG_WCE 11      /* Writeback mode available in config */
+#define VIRTIO_BLK_F_MQ         12      /* support more than one vq */
 
 /* These two define direction. */
 #define VIRTIO_BLK_T_IN         0
@@ -56,18 +70,21 @@ typedef struct VirtIOBufferDescriptor VIO_SG, *PVIO_SG;
 
 #define SECTOR_SIZE             512
 #define IO_PORT_LENGTH          0x40
+#define MAX_CPU                 256
 
-#define VIRTIO_RING_F_INDIRECT_DESC     28
+#define VIRTIO_BLK_QUEUE_LAST   MAX_CPU
+
+#define VIRTIO_BLK_MSIX_CONFIG_VECTOR   0
 
 #define BLOCK_SERIAL_STRLEN     20
 
-#ifdef INDIRECT_SUPPORTED
 #define MAX_PHYS_SEGMENTS       64
-#else
-#define MAX_PHYS_SEGMENTS       16
-#endif
 
 #define VIRTIO_MAX_SG           (3+MAX_PHYS_SEGMENTS)
+
+#define VIOBLK_POOL_TAG        'BoiV'
+
+#define VIOBLK_MAX_TRANSFER     0x00FFFFFF
 
 #pragma pack(1)
 typedef struct virtio_blk_config {
@@ -88,7 +105,12 @@ typedef struct virtio_blk_config {
     u8  physical_block_exp;
     u8  alignment_offset;
     u16 min_io_size;
-    u16 opt_io_size;
+    u32 opt_io_size;
+    /* writeback mode (if VIRTIO_BLK_F_CONFIG_WCE) */
+    u8 wce;
+    u8 unused;
+    /* number of vqs, only available when VIRTIO_BLK_F_MQ is set */
+    u16 num_queues;
 }blk_config, *pblk_config;
 #pragma pack()
 
@@ -106,62 +128,104 @@ typedef struct virtio_blk_req {
     PVOID      req;
     blk_outhdr out_hdr;
     u8         status;
-    VIO_SG     sg[VIRTIO_MAX_SG];
 }blk_req, *pblk_req;
+
+typedef struct virtio_bar {
+    PHYSICAL_ADDRESS  BasePA;
+    ULONG             uLength;
+    PVOID             pBase;
+    BOOLEAN           bPortSpace;
+} VIRTIO_BAR, *PVIRTIO_BAR;
+
+typedef struct _SENSE_INFO {
+    UCHAR senseKey;
+    UCHAR additionalSenseCode;
+    UCHAR additionalSenseCodeQualifier;
+} SENSE_INFO, *PSENSE_INFO;
 
 typedef struct _ADAPTER_EXTENSION {
     VirtIODevice          vdev;
-    PVOID                 uncachedExtensionVa;
-    struct virtqueue *    vq;
+
+    PVOID                 pageAllocationVa;
+    ULONG                 pageAllocationSize;
+    ULONG                 pageOffset;
+
+    PVOID                 poolAllocationVa;
+    ULONG                 poolAllocationSize;
+    ULONG                 poolOffset;
+
+    struct virtqueue *    vq[VIRTIO_BLK_QUEUE_LAST];
+    USHORT                num_queues;
     INQUIRYDATA           inquiry_data;
     blk_config            info;
-    ULONG                 breaks_number;
-    ULONG                 transfer_size;
     ULONG                 queue_depth;
     BOOLEAN               dump_mode;
-    LIST_ENTRY            list_head;
     ULONG                 msix_vectors;
     BOOLEAN               msix_enabled;
-    ULONG                 features;
+    BOOLEAN               msix_one_vector;
+    ULONGLONG             features;
     CHAR                  sn[BLOCK_SERIAL_STRLEN];
     BOOLEAN               sn_ok;
     blk_req               vbr;
     BOOLEAN               indirect;
     ULONGLONG             lastLBA;
-#ifdef USE_STORPORT
-    LIST_ENTRY            complete_list;
-    STOR_DPC              completion_dpc;
+
+    union {
+        PCI_COMMON_HEADER pci_config;
+        UCHAR             pci_config_buf[sizeof(PCI_COMMON_CONFIG)];
+    };
+    VIRTIO_BAR            pci_bars[PCI_TYPE0_ADDRESSES];
+    ULONG                 system_io_bus_number;
+    ULONG                 slot_number;
+    ULONG                 perfFlags;
+    PSTOR_DPC             dpc;
     BOOLEAN               dpc_ok;
+    BOOLEAN               check_condition;
+    SENSE_INFO            sense_info;
+#if (NTDDI_VERSION > NTDDI_WIN7)
+    STOR_ADDR_BTL8        device_address;
+#endif
+#ifdef DBG
+    ULONG                 srb_cnt;
+    ULONG                 inqueue_cnt;
 #endif
 }ADAPTER_EXTENSION, *PADAPTER_EXTENSION;
 
-typedef struct vring_desc_alias
+typedef struct _VRING_DESC_ALIAS
 {
     union
     {
         ULONGLONG data[2];
         UCHAR chars[SIZE_OF_SINGLE_INDIRECT_DESC];
     }u;
-};
+}VRING_DESC_ALIAS;
 
-typedef struct _RHEL_SRB_EXTENSION {
+typedef struct _SRB_EXTENSION {
     blk_req               vbr;
     ULONG                 out;
     ULONG                 in;
-    ULONG                 Xfer;
+    ULONG                 MessageID;
     BOOLEAN               fua;
-#ifndef USE_STORPORT
-    BOOLEAN               call_next;
-#endif
-#if INDIRECT_SUPPORTED
-    struct vring_desc_alias     desc[VIRTIO_MAX_SG];
-#endif
-}RHEL_SRB_EXTENSION, *PRHEL_SRB_EXTENSION;
+    VIO_SG                sg[VIRTIO_MAX_SG];
+    VRING_DESC_ALIAS      desc[VIRTIO_MAX_SG];
+}SRB_EXTENSION, *PSRB_EXTENSION;
 
 BOOLEAN
 VirtIoInterrupt(
     IN PVOID DeviceExtension
     );
+
+#ifndef SCSI_SENSE_ERRORCODE_FIXED_CURRENT
+#define SCSI_SENSE_ERRORCODE_FIXED_CURRENT       0x70
+#endif
+
+#ifndef SCSI_SENSEQ_CAPACITY_DATA_CHANGED
+#define SCSI_SENSEQ_CAPACITY_DATA_CHANGED        0x09
+#endif
+
+#ifndef NTDDI_WIN10
+#define NTDDI_WIN10                              0x0A000000
+#endif
 
 #ifdef MSI_SUPPORTED
 #ifndef PCIX_TABLE_POINTER
