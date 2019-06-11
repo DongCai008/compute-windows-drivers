@@ -253,6 +253,16 @@
       <Version>6.1</Version>
       <AdditionalOptions>/osversion:6.1 %(AdditionalOptions)</AdditionalOptions>
     </Link>
+    <PostBuildEvent Condition="'$(Configuration)|$(Platform)'=='Win8.1 Release|x64'">
+      <Command>
+        xcopy /e /i /y /q $(ProjectDir)objfre_win8_amd64 $(ProjectDir)objfre_win8.1_amd64
+      </Command>
+    </PostBuildEvent>
+    <PostBuildEvent Condition="'$(Configuration)|$(Platform)'=='Win8.1 Release|Win32'">
+      <Command>
+        xcopy /e /i /y /q $(ProjectDir)objfre_win8_x86 $(ProjectDir)objfre_win8.1_x86
+      </Command>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(PlatformToolset)'=='v140_xp'">
     <ClCompile>

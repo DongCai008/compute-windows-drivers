@@ -452,6 +452,7 @@ typedef struct _tagPARANDIS_ADAPTER
     CParaNdisCX CXPath;
     BOOLEAN bCXPathAllocated;
     BOOLEAN bCXPathCreated;
+    BOOLEAN bSharedVectors;
     BOOLEAN bDeviceNeedsReset;
 
     CPUPathBundle               *pPathBundles;
@@ -535,10 +536,6 @@ NDIS_STATUS ParaNdis_ConfigureMSIXVectors(
 
 VOID ParaNdis_CleanupContext(
     PARANDIS_ADAPTER *pContext);
-
-bool ParaNdis_DPCWorkBody(
-    PARANDIS_ADAPTER *pContext,
-    ULONG ulMaxPacketsToIndicate);
 
 void ParaNdis_CXDPCWorkBody(PARANDIS_ADAPTER *pContext);
 

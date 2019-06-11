@@ -2222,6 +2222,11 @@ ENTER_FN_SRB();
         default:
             SRB_SET_SRB_STATUS(Srb, SRB_STATUS_INVALID_REQUEST);
             RhelDbgPrint(TRACE_LEVEL_INFORMATION, " <--> Unsupport control code 0x%x\n", srbControl->ControlCode);
+            if (SRB_CDB(Srb) == NULL || SRB_CDB_LENGTH(Srb) == 0) {
+                status = STATUS_SUCCESS;
+            } else {
+                status = STATUS_MORE_PROCESSING_REQUIRED;
+            }
             break;
     }
 EXIT_FN_SRB();
